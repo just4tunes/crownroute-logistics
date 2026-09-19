@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { connectToDatabase } from "@/lib/db";
+import { applyAutomaticShipmentProgress } from "@/lib/shipment-progress";
 import { Shipment } from "@/models/shipment";
 
 export const dynamic = "force-dynamic";
@@ -12,19 +13,23 @@ type RouteContext = {
 };
 
 export async function GET(
-  request: Request,
+  _request: Request,
   context: RouteContext,
 ) {
   try {
     const { trackingNumber } = await context.params;
 
-    const normalizedTrackingNumber = decodeURIComponent(trackingNumber)
+    const normalizedTrackingNumber = decodeURIComponent(
+      trackingNumber,
+    )
       .trim()
       .toUpperCase();
 
     if (
       !normalizedTrackingNumber ||
-      !/^[A-Z0-9-]{5,40}$/.test(normalizedTrackingNumber)
+      !/^[A-Z0-9-]{5,40}$/.test(
+        normalizedTrackingNumber,
+      )
     ) {
       return NextResponse.json(
         {
@@ -41,27 +46,29 @@ export async function GET(
 
     const shipment = await Shipment.findOne({
       trackingNumber: normalizedTrackingNumber,
-    })
-      .select(
-        [
-          "trackingNumber",
-          "recipient.name",
-          "origin",
-          "destination",
-          "packageDescription",
-          "weight",
-          "serviceMode",
-          "status",
-          "estimatedDelivery",
-          "progress",
-          "currentLocation",
-          "checkpoints",
-          "notifications",
-          "createdAt",
-          "updatedAt",
-        ].join(" "),
-      )
-      .lean();
+    }).select(
+      [
+        "trackingNumber",
+        "recipient.name",
+        "origin",
+        "destination",
+        "packageDescription",
+        "weight",
+        "serviceMode",
+        "status",
+        "departureDate",
+        "arrivalDate",
+        "estimatedDelivery",
+        "progress",
+        "autoProgressEnabled",
+        "lastAutomaticUpdateAt",
+        "currentLocation",
+        "checkpoints",
+        "notifications",
+        "createdAt",
+        "updatedAt",
+      ].join(" "),
+    );
 
     if (!shipment) {
       return NextResponse.json(
@@ -75,9 +82,16 @@ export async function GET(
       );
     }
 
+    const shipmentWasUpdated =
+      applyAutomaticShipmentProgress(shipment);
+
+    if (shipmentWasUpdated) {
+      await shipment.save();
+    }
+
     return NextResponse.json({
       success: true,
-      shipment,
+      shipment: shipment.toObject(),
     });
   } catch (error) {
     console.error("Tracking API error:", error);

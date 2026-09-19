@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import {
-  FormEvent,
   useEffect,
   useState,
+  type FormEvent,
 } from "react";
 import {
   AlertTriangle,
@@ -17,10 +17,24 @@ import {
   LoaderCircle,
   MapPin,
   Navigation,
-  Package,
   Save,
   Truck,
 } from "lucide-react";
+
+type CheckpointStatus =
+  | "pending"
+  | "active"
+  | "completed";
+
+type CompletionSource =
+  | "admin"
+  | "automatic";
+
+type NotificationType =
+  | "information"
+  | "success"
+  | "warning"
+  | "critical";
 
 type Checkpoint = {
   _id: string;
@@ -32,14 +46,15 @@ type Checkpoint = {
   description: string;
   estimatedArrival?: string;
   completedAt?: string;
-  status: "pending" | "active" | "completed";
+  status: CheckpointStatus;
+  completionSource?: CompletionSource;
 };
 
 type ShipmentNotification = {
   _id: string;
   title: string;
   message: string;
-  type: "information" | "success" | "warning" | "critical";
+  type: NotificationType;
   showAsPopup: boolean;
   createdAt: string;
 };
@@ -76,13 +91,20 @@ type ShipmentData = {
   weight?: number;
   serviceMode: string;
   status: string;
+
+  departureDate?: string;
+  arrivalDate?: string;
   estimatedDelivery?: string;
+
   progress: number;
+  autoProgressEnabled?: boolean;
+  lastAutomaticUpdateAt?: string;
 
   currentLocation?: {
     name?: string;
     latitude?: number;
     longitude?: number;
+    source?: CompletionSource;
   };
 
   checkpoints: Checkpoint[];
@@ -117,17 +139,28 @@ export function ShipmentManager({
   const [locationName, setLocationName] =
     useState("");
 
-  const [latitude, setLatitude] = useState("");
-  const [longitude, setLongitude] = useState("");
-
-  const [notificationTitle, setNotificationTitle] =
+  const [latitude, setLatitude] =
     useState("");
 
-  const [notificationMessage, setNotificationMessage] =
+  const [longitude, setLongitude] =
     useState("");
 
-  const [notificationType, setNotificationType] =
-    useState("information");
+  const [
+    notificationTitle,
+    setNotificationTitle,
+  ] = useState("");
+
+  const [
+    notificationMessage,
+    setNotificationMessage,
+  ] = useState("");
+
+  const [
+    notificationType,
+    setNotificationType,
+  ] = useState<NotificationType>(
+    "information",
+  );
 
   const [showAsPopup, setShowAsPopup] =
     useState(false);
@@ -140,7 +173,8 @@ export function ShipmentManager({
 
   const activeCheckpoint =
     shipment.checkpoints.find(
-      (checkpoint) => checkpoint.status === "active",
+      (checkpoint) =>
+        checkpoint.status === "active",
     ) ?? null;
 
   useEffect(() => {
@@ -152,8 +186,14 @@ export function ShipmentManager({
     }
 
     setLocationName(activeCheckpoint.location);
-    setLatitude(String(activeCheckpoint.latitude));
-    setLongitude(String(activeCheckpoint.longitude));
+
+    setLatitude(
+      String(activeCheckpoint.latitude),
+    );
+
+    setLongitude(
+      String(activeCheckpoint.longitude),
+    );
   }, [
     activeCheckpoint?._id,
     activeCheckpoint?.location,
@@ -181,11 +221,27 @@ export function ShipmentManager({
         },
       );
 
-      const data = await response.json();
+      const data = await response
+        .json()
+        .catch(() => null);
 
       if (!response.ok) {
+        console.error(
+          "Update shipment API response:",
+          data,
+        );
+
         setError(
-          data.error ?? "Unable to update shipment.",
+          data?.error ??
+            `Unable to update shipment. Server returned ${response.status}.`,
+        );
+
+        return null;
+      }
+
+      if (!data?.shipment) {
+        setError(
+          "The server did not return the updated shipment.",
         );
 
         return null;
@@ -193,13 +249,23 @@ export function ShipmentManager({
 
       setShipment(data.shipment);
       setSelectedStatus(data.shipment.status);
+
       setSuccess(
-        data.message ?? "Shipment updated successfully.",
+        data.message ??
+          "Shipment updated successfully.",
       );
 
       return data.shipment as ShipmentData;
-    } catch {
-      setError("Unable to connect to the server.");
+    } catch (requestError) {
+      console.error(
+        "Update shipment request failed:",
+        requestError,
+      );
+
+      setError(
+        "Unable to connect to the server.",
+      );
+
       return null;
     } finally {
       setLoadingAction("");
@@ -222,17 +288,62 @@ export function ShipmentManager({
     event.preventDefault();
 
     if (!activeCheckpoint) {
-      setError("There is no active checkpoint.");
+      setError(
+        "There is no active checkpoint.",
+      );
+
+      return;
+    }
+
+    if (!locationName.trim()) {
+      setError("Enter a location name.");
+      return;
+    }
+
+    const parsedLatitude = Number(latitude);
+    const parsedLongitude = Number(longitude);
+
+    if (
+      Number.isNaN(parsedLatitude) ||
+      Number.isNaN(parsedLongitude)
+    ) {
+      setError(
+        "Enter valid latitude and longitude values.",
+      );
+
+      return;
+    }
+
+    if (
+      parsedLatitude < -90 ||
+      parsedLatitude > 90
+    ) {
+      setError(
+        "Latitude must be between -90 and 90.",
+      );
+
+      return;
+    }
+
+    if (
+      parsedLongitude < -180 ||
+      parsedLongitude > 180
+    ) {
+      setError(
+        "Longitude must be between -180 and 180.",
+      );
+
       return;
     }
 
     await updateShipment(
       {
         action: "record_location",
-        checkpointId: activeCheckpoint._id,
-        locationName,
-        latitude: Number(latitude),
-        longitude: Number(longitude),
+        checkpointId:
+          activeCheckpoint._id,
+        locationName: locationName.trim(),
+        latitude: parsedLatitude,
+        longitude: parsedLongitude,
       },
       "location",
     );
@@ -240,13 +351,18 @@ export function ShipmentManager({
 
   async function completeActiveCheckpoint() {
     if (!activeCheckpoint) {
+      setError(
+        "There is no active checkpoint.",
+      );
+
       return;
     }
 
     await updateShipment(
       {
         action: "complete_checkpoint",
-        checkpointId: activeCheckpoint._id,
+        checkpointId:
+          activeCheckpoint._id,
       },
       "checkpoint",
     );
@@ -257,24 +373,48 @@ export function ShipmentManager({
   ) {
     event.preventDefault();
 
-    const updatedShipment = await updateShipment(
-      {
-        action: "add_notification",
-        title: notificationTitle,
-        message: notificationMessage,
-        type: notificationType,
-        showAsPopup,
-      },
-      "notification",
-    );
+    if (
+      !notificationTitle.trim() ||
+      !notificationMessage.trim()
+    ) {
+      setError(
+        "Enter a notification title and message.",
+      );
+
+      return;
+    }
+
+    const updatedShipment =
+      await updateShipment(
+        {
+          action: "add_notification",
+          title:
+            notificationTitle.trim(),
+          message:
+            notificationMessage.trim(),
+          type: notificationType,
+          showAsPopup,
+        },
+        "notification",
+      );
 
     if (updatedShipment) {
       setNotificationTitle("");
       setNotificationMessage("");
-      setNotificationType("information");
+
+      setNotificationType(
+        "information",
+      );
+
       setShowAsPopup(false);
     }
   }
+
+  const completedCheckpointCount =
+    shipment.checkpoints.filter(
+      (checkpoint) =>
+        checkpoint.status === "completed",
+    ).length;
 
   return (
     <main className="min-h-screen bg-[#080808] px-5 py-10 text-white lg:px-8">
@@ -319,7 +459,10 @@ export function ShipmentManager({
         </div>
 
         {error && (
-          <div className="mt-7 rounded-2xl border border-red-400/20 bg-red-400/10 px-5 py-4 text-sm text-red-300">
+          <div
+            role="alert"
+            className="mt-7 rounded-2xl border border-red-400/20 bg-red-400/10 px-5 py-4 text-sm text-red-300"
+          >
             {error}
           </div>
         )}
@@ -337,30 +480,42 @@ export function ShipmentManager({
             </p>
 
             <p className="mt-3 text-xl font-black">
-              {formatLabel(shipment.status)}
+              {formatLabel(
+                shipment.status,
+              )}
             </p>
 
             <select
               value={selectedStatus}
               onChange={(event) =>
-                setSelectedStatus(event.target.value)
+                setSelectedStatus(
+                  event.target.value,
+                )
               }
               className="mt-5 h-12 w-full rounded-xl border border-white/10 bg-[#181818] px-4 text-sm outline-none focus:border-[#d4a72c]/60"
             >
-              {shipmentStatuses.map((status) => (
-                <option key={status} value={status}>
-                  {formatLabel(status)}
-                </option>
-              ))}
+              {shipmentStatuses.map(
+                (status) => (
+                  <option
+                    key={status}
+                    value={status}
+                  >
+                    {formatLabel(status)}
+                  </option>
+                ),
+              )}
             </select>
 
             <button
               type="button"
               onClick={handleStatusUpdate}
-              disabled={loadingAction === "status"}
+              disabled={
+                loadingAction === "status"
+              }
               className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#d4a72c] text-sm font-black text-black disabled:opacity-50"
             >
-              {loadingAction === "status" ? (
+              {loadingAction ===
+              "status" ? (
                 <LoaderCircle
                   size={17}
                   className="animate-spin"
@@ -386,20 +541,21 @@ export function ShipmentManager({
               <div
                 className="h-full rounded-full bg-gradient-to-r from-[#98700f] to-[#f2cf68] transition-all duration-700"
                 style={{
-                  width: `${shipment.progress}%`,
+                  width: `${Math.min(
+                    100,
+                    Math.max(
+                      0,
+                      shipment.progress,
+                    ),
+                  )}%`,
                 }}
               />
             </div>
 
             <p className="mt-4 text-xs leading-5 text-white/35">
-              {
-                shipment.checkpoints.filter(
-                  (checkpoint) =>
-                    checkpoint.status === "completed",
-                ).length
-              }{" "}
-              of {shipment.checkpoints.length} checkpoints
-              completed.
+              {completedCheckpointCount} of{" "}
+              {shipment.checkpoints.length}{" "}
+              checkpoints completed.
             </p>
           </article>
 
@@ -409,27 +565,70 @@ export function ShipmentManager({
             </p>
 
             <p className="mt-3 font-black">
-              {shipment.currentLocation?.name ??
-                "Not recorded"}
+              {shipment.currentLocation
+                ?.name ?? "Not recorded"}
             </p>
 
             <p className="mt-3 text-xs text-white/35">
               Latitude:{" "}
-              {shipment.currentLocation?.latitude ??
-                "Pending"}
+              {shipment.currentLocation
+                ?.latitude ?? "Pending"}
             </p>
 
             <p className="mt-1 text-xs text-white/35">
               Longitude:{" "}
-              {shipment.currentLocation?.longitude ??
-                "Pending"}
+              {shipment.currentLocation
+                ?.longitude ?? "Pending"}
             </p>
 
             <div className="mt-5 flex items-center gap-2 text-xs font-bold text-[#d4a72c]">
               <Navigation size={15} />
-              Live operational position
+
+              {shipment.currentLocation
+                ?.source === "automatic"
+                ? "Scheduled route position"
+                : shipment.currentLocation
+                      ?.source === "admin"
+                  ? "Admin verified position"
+                  : "Operational position"}
             </div>
           </article>
+        </section>
+
+        <section className="mt-6 rounded-3xl border border-white/10 bg-[#111111] p-6">
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            <ScheduleDetail
+              label="Departure"
+              value={formatDate(
+                shipment.departureDate,
+              )}
+            />
+
+            <ScheduleDetail
+              label="Arrival"
+              value={formatDate(
+                shipment.arrivalDate ??
+                  shipment.estimatedDelivery,
+              )}
+            />
+
+            <ScheduleDetail
+              label="Automatic progress"
+              value={
+                shipment.autoProgressEnabled ===
+                false
+                  ? "Disabled"
+                  : "Enabled"
+              }
+            />
+
+            <ScheduleDetail
+              label="Last automatic update"
+              value={formatDate(
+                shipment.lastAutomaticUpdateAt,
+              )}
+            />
+          </div>
         </section>
 
         <section className="mt-8 grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
@@ -444,106 +643,165 @@ export function ShipmentManager({
               </h2>
             </div>
 
-            <div className="mt-9">
-              {shipment.checkpoints.map(
-                (checkpoint, index) => {
-                  const completed =
-                    checkpoint.status === "completed";
+            {shipment.checkpoints.length ===
+            0 ? (
+              <p className="mt-8 text-sm text-white/35">
+                This shipment has no route
+                checkpoints.
+              </p>
+            ) : (
+              <div className="mt-9">
+                {shipment.checkpoints.map(
+                  (
+                    checkpoint,
+                    index,
+                  ) => {
+                    const completed =
+                      checkpoint.status ===
+                      "completed";
 
-                  const active =
-                    checkpoint.status === "active";
+                    const active =
+                      checkpoint.status ===
+                      "active";
 
-                  return (
-                    <div
-                      key={checkpoint._id}
-                      className="relative flex gap-4 pb-9"
-                    >
-                      {index !==
-                        shipment.checkpoints.length - 1 && (
-                        <span
-                          className={`absolute left-[19px] top-10 h-full w-px ${
-                            completed
-                              ? "bg-[#d4a72c]"
-                              : "bg-white/10"
-                          }`}
-                        />
-                      )}
-
-                      <span
-                        className={`relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border ${
-                          completed
-                            ? "border-[#d4a72c] bg-[#d4a72c] text-black"
-                            : active
-                              ? "border-[#d4a72c] bg-[#d4a72c]/15 text-[#e6bd4f]"
-                              : "border-white/15 bg-[#161616] text-white/25"
-                        }`}
+                    return (
+                      <div
+                        key={checkpoint._id}
+                        className="relative flex gap-4 pb-9"
                       >
-                        {completed ? (
-                          <Check size={18} strokeWidth={3} />
-                        ) : active ? (
-                          <Truck size={17} />
-                        ) : (
-                          <Clock3 size={17} />
+                        {index !==
+                          shipment.checkpoints
+                            .length -
+                            1 && (
+                          <span
+                            className={`absolute left-[19px] top-10 h-full w-px ${
+                              completed
+                                ? "bg-[#d4a72c]"
+                                : "bg-white/10"
+                            }`}
+                          />
                         )}
-                      </span>
 
-                      <div className="flex-1">
-                        <div className="flex flex-col justify-between gap-3 sm:flex-row">
-                          <div>
-                            <p
-                              className={`text-sm font-black ${
-                                active
-                                  ? "text-[#e6bd4f]"
-                                  : ""
-                              }`}
-                            >
-                              {checkpoint.location}
-                            </p>
+                        <span
+                          className={`relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border ${
+                            completed
+                              ? "border-[#d4a72c] bg-[#d4a72c] text-black"
+                              : active
+                                ? "border-[#d4a72c] bg-[#d4a72c]/15 text-[#e6bd4f]"
+                                : "border-white/15 bg-[#161616] text-white/25"
+                          }`}
+                        >
+                          {completed ? (
+                            <Check
+                              size={18}
+                              strokeWidth={3}
+                            />
+                          ) : active ? (
+                            <Truck
+                              size={17}
+                            />
+                          ) : (
+                            <Clock3
+                              size={17}
+                            />
+                          )}
+                        </span>
 
-                            <p className="mt-1 text-xs text-white/35">
-                              {checkpoint.city},{" "}
-                              {checkpoint.country}
-                            </p>
+                        <div className="flex-1">
+                          <div className="flex flex-col justify-between gap-3 sm:flex-row">
+                            <div>
+                              <p
+                                className={`text-sm font-black ${
+                                  active
+                                    ? "text-[#e6bd4f]"
+                                    : ""
+                                }`}
+                              >
+                                {
+                                  checkpoint.location
+                                }
+                              </p>
 
-                            <p className="mt-2 text-sm text-white/40">
-                              {checkpoint.description}
-                            </p>
+                              <p className="mt-1 text-xs text-white/35">
+                                {
+                                  checkpoint.city
+                                }
+                                ,{" "}
+                                {
+                                  checkpoint.country
+                                }
+                              </p>
+
+                              <p className="mt-2 text-sm text-white/40">
+                                {
+                                  checkpoint.description
+                                }
+                              </p>
+                            </div>
+
+                            <span className="h-fit w-fit rounded-full bg-white/[0.05] px-3 py-1 text-[10px] font-black uppercase tracking-wider text-white/45">
+                              {
+                                checkpoint.status
+                              }
+                            </span>
                           </div>
 
-                          <span className="h-fit w-fit rounded-full bg-white/[0.05] px-3 py-1 text-[10px] font-black uppercase tracking-wider text-white/45">
-                            {checkpoint.status}
-                          </span>
+                          <p className="mt-3 text-xs text-white/25">
+                            {formatCoordinate(
+                              checkpoint.latitude,
+                            )}
+                            ,{" "}
+                            {formatCoordinate(
+                              checkpoint.longitude,
+                            )}
+                          </p>
+
+                          <p className="mt-2 text-xs text-white/25">
+                            Scheduled:{" "}
+                            {formatDate(
+                              checkpoint.estimatedArrival,
+                            )}
+                          </p>
+
+                          {completed &&
+                            checkpoint.completedAt && (
+                              <p className="mt-2 text-xs text-emerald-300/60">
+                                Completed{" "}
+                                {formatDate(
+                                  checkpoint.completedAt,
+                                )}
+                              </p>
+                            )}
+
+                          {completed &&
+                            checkpoint.completionSource && (
+                              <p className="mt-1 text-xs text-white/25">
+                                {checkpoint.completionSource ===
+                                "automatic"
+                                  ? "Scheduled automatic update"
+                                  : "Verified by administrator"}
+                              </p>
+                            )}
                         </div>
-
-                        <p className="mt-3 text-xs text-white/25">
-                          {checkpoint.latitude.toFixed(4)},{" "}
-                          {checkpoint.longitude.toFixed(4)}
-                        </p>
-
-                        {completed &&
-                          checkpoint.completedAt && (
-                            <p className="mt-2 text-xs text-emerald-300/60">
-                              Completed{" "}
-                              {formatDate(
-                                checkpoint.completedAt,
-                              )}
-                            </p>
-                          )}
                       </div>
-                    </div>
-                  );
-                },
-              )}
-            </div>
+                    );
+                  },
+                )}
+              </div>
+            )}
           </div>
 
           <div className="space-y-6">
             <form
-              onSubmit={handleLocationUpdate}
+              noValidate
+              onSubmit={
+                handleLocationUpdate
+              }
               className="rounded-3xl border border-white/10 bg-[#111111] p-6"
             >
               <div className="flex items-center gap-3">
                 <MapPin className="text-[#d4a72c]" />
+
                 <h2 className="font-black">
                   Active checkpoint
                 </h2>
@@ -552,27 +810,35 @@ export function ShipmentManager({
               {activeCheckpoint ? (
                 <>
                   <p className="mt-4 text-sm font-bold text-[#e6bd4f]">
-                    {activeCheckpoint.location}
+                    {
+                      activeCheckpoint.location
+                    }
                   </p>
 
                   <div className="mt-5 space-y-4">
                     <AdminInput
                       label="Location name"
                       value={locationName}
-                      onChange={setLocationName}
+                      onChange={
+                        setLocationName
+                      }
                     />
 
                     <AdminInput
                       label="Latitude"
                       value={latitude}
-                      onChange={setLatitude}
+                      onChange={
+                        setLatitude
+                      }
                       type="number"
                     />
 
                     <AdminInput
                       label="Longitude"
                       value={longitude}
-                      onChange={setLongitude}
+                      onChange={
+                        setLongitude
+                      }
                       type="number"
                     />
                   </div>
@@ -580,11 +846,13 @@ export function ShipmentManager({
                   <button
                     type="submit"
                     disabled={
-                      loadingAction === "location"
+                      loadingAction ===
+                      "location"
                     }
                     className="mt-5 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#d4a72c]/40 text-sm font-black text-[#e6bd4f] disabled:opacity-50"
                   >
-                    {loadingAction === "location" ? (
+                    {loadingAction ===
+                    "location" ? (
                       <LoaderCircle
                         size={17}
                         className="animate-spin"
@@ -598,19 +866,25 @@ export function ShipmentManager({
 
                   <button
                     type="button"
-                    onClick={completeActiveCheckpoint}
+                    onClick={
+                      completeActiveCheckpoint
+                    }
                     disabled={
-                      loadingAction === "checkpoint"
+                      loadingAction ===
+                      "checkpoint"
                     }
                     className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#d4a72c] text-sm font-black text-black disabled:opacity-50"
                   >
-                    {loadingAction === "checkpoint" ? (
+                    {loadingAction ===
+                    "checkpoint" ? (
                       <LoaderCircle
                         size={17}
                         className="animate-spin"
                       />
                     ) : (
-                      <CheckCircle2 size={18} />
+                      <CheckCircle2
+                        size={18}
+                      />
                     )}
 
                     Complete checkpoint
@@ -618,17 +892,20 @@ export function ShipmentManager({
                 </>
               ) : (
                 <p className="mt-4 text-sm leading-6 text-white/35">
-                  This shipment has no active checkpoint.
+                  This shipment has no active
+                  checkpoint.
                 </p>
               )}
             </form>
 
             <form
+              noValidate
               onSubmit={handleNotification}
               className="rounded-3xl border border-white/10 bg-[#111111] p-6"
             >
               <div className="flex items-center gap-3">
                 <BellRing className="text-[#d4a72c]" />
+
                 <h2 className="font-black">
                   Customer notification
                 </h2>
@@ -638,7 +915,9 @@ export function ShipmentManager({
                 <AdminInput
                   label="Notification title"
                   value={notificationTitle}
-                  onChange={setNotificationTitle}
+                  onChange={
+                    setNotificationTitle
+                  }
                   required
                 />
 
@@ -648,7 +927,9 @@ export function ShipmentManager({
                   </label>
 
                   <textarea
-                    value={notificationMessage}
+                    value={
+                      notificationMessage
+                    }
                     onChange={(event) =>
                       setNotificationMessage(
                         event.target.value,
@@ -669,7 +950,8 @@ export function ShipmentManager({
                     value={notificationType}
                     onChange={(event) =>
                       setNotificationType(
-                        event.target.value,
+                        event.target
+                          .value as NotificationType,
                       )
                     }
                     className="h-12 w-full rounded-xl border border-white/10 bg-[#181818] px-4 text-sm outline-none"
@@ -677,12 +959,15 @@ export function ShipmentManager({
                     <option value="information">
                       Information
                     </option>
+
                     <option value="success">
                       Success
                     </option>
+
                     <option value="warning">
                       Warning
                     </option>
+
                     <option value="critical">
                       Critical
                     </option>
@@ -694,13 +979,16 @@ export function ShipmentManager({
                     type="checkbox"
                     checked={showAsPopup}
                     onChange={(event) =>
-                      setShowAsPopup(event.target.checked)
+                      setShowAsPopup(
+                        event.target.checked,
+                      )
                     }
                     className="h-4 w-4 accent-[#d4a72c]"
                   />
 
                   <span className="text-xs font-semibold text-white/60">
-                    Display as a popup on the tracking page
+                    Display as a popup on the
+                    tracking page
                   </span>
                 </label>
               </div>
@@ -708,11 +996,13 @@ export function ShipmentManager({
               <button
                 type="submit"
                 disabled={
-                  loadingAction === "notification"
+                  loadingAction ===
+                  "notification"
                 }
                 className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#d4a72c] text-sm font-black text-black disabled:opacity-50"
               >
-                {loadingAction === "notification" ? (
+                {loadingAction ===
+                "notification" ? (
                   <LoaderCircle
                     size={17}
                     className="animate-spin"
@@ -732,55 +1022,91 @@ export function ShipmentManager({
             Notification history
           </h2>
 
-          {shipment.notifications.length === 0 ? (
+          {shipment.notifications.length ===
+          0 ? (
             <p className="mt-4 text-sm text-white/35">
-              No notifications have been published.
+              No notifications have been
+              published.
             </p>
           ) : (
             <div className="mt-6 grid gap-4 md:grid-cols-2">
               {shipment.notifications
                 .slice()
                 .reverse()
-                .map((notification) => (
-                  <article
-                    key={notification._id}
-                    className="rounded-2xl border border-white/10 bg-white/[0.025] p-5"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="font-black">
-                        {notification.title}
+                .map(
+                  (notification) => (
+                    <article
+                      key={
+                        notification._id
+                      }
+                      className="rounded-2xl border border-white/10 bg-white/[0.025] p-5"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-black">
+                          {
+                            notification.title
+                          }
+                        </p>
+
+                        <span className="text-[10px] font-black uppercase text-[#d4a72c]">
+                          {
+                            notification.type
+                          }
+                        </span>
+                      </div>
+
+                      <p className="mt-3 text-sm leading-6 text-white/40">
+                        {
+                          notification.message
+                        }
                       </p>
 
-                      <span className="text-[10px] font-black uppercase text-[#d4a72c]">
-                        {notification.type}
-                      </span>
-                    </div>
-
-                    <p className="mt-3 text-sm leading-6 text-white/40">
-                      {notification.message}
-                    </p>
-
-                    <div className="mt-4 flex items-center justify-between text-xs text-white/25">
-                      <span>
-                        {formatDate(
-                          notification.createdAt,
-                        )}
-                      </span>
-
-                      {notification.showAsPopup && (
-                        <span className="flex items-center gap-1 text-amber-300">
-                          <AlertTriangle size={13} />
-                          Popup
+                      <div className="mt-4 flex items-center justify-between text-xs text-white/25">
+                        <span>
+                          {formatDate(
+                            notification.createdAt,
+                          )}
                         </span>
-                      )}
-                    </div>
-                  </article>
-                ))}
+
+                        {notification.showAsPopup && (
+                          <span className="flex items-center gap-1 text-amber-300">
+                            <AlertTriangle
+                              size={13}
+                            />
+                            Popup
+                          </span>
+                        )}
+                      </div>
+                    </article>
+                  ),
+                )}
             </div>
           )}
         </section>
       </div>
     </main>
+  );
+}
+
+type ScheduleDetailProps = {
+  label: string;
+  value: string;
+};
+
+function ScheduleDetail({
+  label,
+  value,
+}: ScheduleDetailProps) {
+  return (
+    <div>
+      <p className="text-xs uppercase tracking-wider text-white/30">
+        {label}
+      </p>
+
+      <p className="mt-2 text-sm font-black text-white/75">
+        {value}
+      </p>
+    </div>
   );
 }
 
@@ -807,7 +1133,11 @@ function AdminInput({
 
       <input
         type={type}
-        step={type === "number" ? "any" : undefined}
+        step={
+          type === "number"
+            ? "any"
+            : undefined
+        }
         value={value}
         required={required}
         onChange={(event) =>
@@ -824,7 +1154,8 @@ function formatLabel(value: string) {
     .split("_")
     .map(
       (word) =>
-        word.charAt(0).toUpperCase() + word.slice(1),
+        word.charAt(0).toUpperCase() +
+        word.slice(1),
     )
     .join(" ");
 }
@@ -834,8 +1165,25 @@ function formatDate(value?: string) {
     return "Pending";
   }
 
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Pending";
+  }
+
+  return new Intl.DateTimeFormat(
+    "en-US",
+    {
+      dateStyle: "medium",
+      timeStyle: "short",
+    },
+  ).format(date);
+}
+
+function formatCoordinate(value: number) {
+  if (!Number.isFinite(value)) {
+    return "Pending";
+  }
+
+  return value.toFixed(4);
 }

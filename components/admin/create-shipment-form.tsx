@@ -1,7 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import {
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -29,7 +34,8 @@ const initialForm = {
   packageDescription: "",
   weight: "",
   serviceMode: "air",
-  estimatedDelivery: "",
+  departureDate: "",
+  arrivalDate: "",
 };
 
 type CreatedShipment = {
@@ -46,8 +52,10 @@ export function CreateShipmentForm() {
   const [copied, setCopied] = useState(false);
 
   function updateField(
-    event: React.ChangeEvent<
-      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    event: ChangeEvent<
+      HTMLInputElement |
+      HTMLTextAreaElement |
+      HTMLSelectElement
     >,
   ) {
     const { name, value } = event.target;
@@ -63,70 +71,240 @@ export function CreateShipmentForm() {
   ) {
     event.preventDefault();
 
+    if (submitting) {
+      return;
+    }
+
     setError("");
     setSubmitting(true);
 
     try {
-      const estimatedDelivery = new Date(
-        form.estimatedDelivery,
-      );
+      const requiredFields = [
+        form.senderName,
+        form.recipientName,
+        form.originCity,
+        form.originCountry,
+        form.originLatitude,
+        form.originLongitude,
+        form.destinationCity,
+        form.destinationCountry,
+        form.destinationLatitude,
+        form.destinationLongitude,
+        form.packageDescription,
+        form.departureDate,
+        form.arrivalDate,
+      ];
 
-      if (Number.isNaN(estimatedDelivery.getTime())) {
-        setError("Enter a valid estimated delivery date.");
+      if (
+        requiredFields.some((field) => !field.trim())
+      ) {
+        setError(
+          "Complete all required shipment fields.",
+        );
         return;
       }
 
-      const response = await fetch("/api/admin/shipments", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const originLatitude = Number(
+        form.originLatitude,
+      );
+
+      const originLongitude = Number(
+        form.originLongitude,
+      );
+
+      const destinationLatitude = Number(
+        form.destinationLatitude,
+      );
+
+      const destinationLongitude = Number(
+        form.destinationLongitude,
+      );
+
+      const coordinates = [
+        originLatitude,
+        originLongitude,
+        destinationLatitude,
+        destinationLongitude,
+      ];
+
+      if (
+        coordinates.some((coordinate) =>
+          Number.isNaN(coordinate),
+        )
+      ) {
+        setError(
+          "Enter valid origin and destination coordinates.",
+        );
+        return;
+      }
+
+      if (
+        originLatitude < -90 ||
+        originLatitude > 90 ||
+        destinationLatitude < -90 ||
+        destinationLatitude > 90
+      ) {
+        setError(
+          "Latitude must be between -90 and 90.",
+        );
+        return;
+      }
+
+      if (
+        originLongitude < -180 ||
+        originLongitude > 180 ||
+        destinationLongitude < -180 ||
+        destinationLongitude > 180
+      ) {
+        setError(
+          "Longitude must be between -180 and 180.",
+        );
+        return;
+      }
+
+      if (
+        form.senderEmail &&
+        !form.senderEmail.includes("@")
+      ) {
+        setError(
+          "Enter a valid sender email or leave it blank.",
+        );
+        return;
+      }
+
+      if (
+        form.recipientEmail &&
+        !form.recipientEmail.includes("@")
+      ) {
+        setError(
+          "Enter a valid recipient email or leave it blank.",
+        );
+        return;
+      }
+
+      const weight = form.weight
+        ? Number(form.weight)
+        : undefined;
+
+      if (
+        weight !== undefined &&
+        (Number.isNaN(weight) || weight <= 0)
+      ) {
+        setError(
+          "Weight must be greater than zero or left blank.",
+        );
+        return;
+      }
+
+      const departureDate = new Date(
+        form.departureDate,
+      );
+
+      const arrivalDate = new Date(
+        form.arrivalDate,
+      );
+
+      if (
+        Number.isNaN(departureDate.getTime()) ||
+        Number.isNaN(arrivalDate.getTime())
+      ) {
+        setError(
+          "Enter valid departure and arrival dates.",
+        );
+        return;
+      }
+
+      if (
+        arrivalDate.getTime() <=
+        departureDate.getTime()
+      ) {
+        setError(
+          "The arrival date must be later than the departure date.",
+        );
+        return;
+      }
+
+      const response = await fetch(
+        "/api/admin/shipments",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            senderName: form.senderName.trim(),
+            senderEmail: form.senderEmail.trim(),
+
+            recipientName:
+              form.recipientName.trim(),
+            recipientEmail:
+              form.recipientEmail.trim(),
+
+            originCity: form.originCity.trim(),
+            originCountry:
+              form.originCountry.trim(),
+            originLatitude,
+            originLongitude,
+
+            destinationCity:
+              form.destinationCity.trim(),
+            destinationCountry:
+              form.destinationCountry.trim(),
+            destinationLatitude,
+            destinationLongitude,
+
+            packageDescription:
+              form.packageDescription.trim(),
+
+            weight,
+            serviceMode: form.serviceMode,
+
+            departureDate:
+              departureDate.toISOString(),
+
+            arrivalDate:
+              arrivalDate.toISOString(),
+
+            autoProgressEnabled: true,
+          }),
         },
-        body: JSON.stringify({
-          senderName: form.senderName,
-          senderEmail: form.senderEmail,
-          recipientName: form.recipientName,
-          recipientEmail: form.recipientEmail,
+      );
 
-          originCity: form.originCity,
-          originCountry: form.originCountry,
-          originLatitude: Number(form.originLatitude),
-          originLongitude: Number(form.originLongitude),
-
-          destinationCity: form.destinationCity,
-          destinationCountry: form.destinationCountry,
-          destinationLatitude: Number(
-            form.destinationLatitude,
-          ),
-          destinationLongitude: Number(
-            form.destinationLongitude,
-          ),
-
-          packageDescription: form.packageDescription,
-
-          weight: form.weight
-            ? Number(form.weight)
-            : undefined,
-
-          serviceMode: form.serviceMode,
-          estimatedDelivery:
-            estimatedDelivery.toISOString(),
-        }),
-      });
-
-      const data = await response.json();
+      const data = await response
+        .json()
+        .catch(() => null);
 
       if (!response.ok) {
+        console.error(
+          "Create shipment API response:",
+          data,
+        );
+
         setError(
-          data.error ??
-            "Unable to create the shipment.",
+          data?.error ??
+            `Unable to create the shipment. Server returned ${response.status}.`,
         );
 
         return;
       }
 
+      if (!data?.shipment?.trackingNumber) {
+        setError(
+          "The shipment was created, but no tracking number was returned.",
+        );
+        return;
+      }
+
       setCreatedShipment(data.shipment);
-    } catch {
-      setError("Unable to connect to the server.");
+    } catch (submitError) {
+      console.error(
+        "Create shipment request failed:",
+        submitError,
+      );
+
+      setError(
+        "Unable to connect to the server. Check the terminal for details.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -165,8 +343,9 @@ export function CreateShipmentForm() {
           </h1>
 
           <p className="mt-3 text-sm leading-7 text-white/40">
-            CrownRoute has generated the tracking number and
-            planned route checkpoints.
+            CrownRoute generated the tracking number
+            and scheduled the route checkpoints between
+            the selected departure and arrival dates.
           </p>
 
           <div className="mt-7 rounded-2xl border border-[#d4a72c]/25 bg-[#d4a72c]/[0.07] p-5">
@@ -184,7 +363,10 @@ export function CreateShipmentForm() {
               className="mx-auto mt-4 flex items-center gap-2 text-xs font-bold text-white/50 transition hover:text-white"
             >
               <Copy size={15} />
-              {copied ? "Copied" : "Copy tracking number"}
+
+              {copied
+                ? "Copied"
+                : "Copy tracking number"}
             </button>
           </div>
 
@@ -204,6 +386,7 @@ export function CreateShipmentForm() {
                 setForm(initialForm);
                 setCreatedShipment(null);
                 setCopied(false);
+                setError("");
               }}
               className="rounded-xl border border-white/15 px-5 py-3.5 text-sm font-black text-white/65 transition hover:border-[#d4a72c]/50 hover:text-[#e6bd4f]"
             >
@@ -244,13 +427,18 @@ export function CreateShipmentForm() {
           </h1>
 
           <p className="mt-3 max-w-2xl text-sm leading-7 text-white/40">
-            Enter the shipment information. CrownRoute will
-            generate the tracking number, estimated route and
-            operational checkpoints.
+            Enter the shipment information.
+            CrownRoute will generate the tracking number
+            and distribute the route checkpoints between
+            the departure and arrival dates.
           </p>
         </header>
 
-        <form onSubmit={handleSubmit} className="mt-9 space-y-6">
+        <form
+          noValidate
+          onSubmit={handleSubmit}
+          className="mt-9 space-y-6"
+        >
           <FormSection
             icon={<UserRound size={21} />}
             title="Sender and recipient"
@@ -378,15 +566,19 @@ export function CreateShipmentForm() {
           <FormSection
             icon={<PackagePlus size={21} />}
             title="Package information"
-            description="Shipment type, weight and estimated delivery."
+            description="Shipment type, weight and scheduled journey dates."
           >
             <div className="grid gap-5 sm:grid-cols-2">
               <div className="sm:col-span-2">
-                <label className="mb-2 block text-xs font-bold text-white/55">
+                <label
+                  htmlFor="packageDescription"
+                  className="mb-2 block text-xs font-bold text-white/55"
+                >
                   Package description
                 </label>
 
                 <textarea
+                  id="packageDescription"
                   name="packageDescription"
                   value={form.packageDescription}
                   onChange={updateField}
@@ -408,29 +600,56 @@ export function CreateShipmentForm() {
               />
 
               <div>
-                <label className="mb-2 block text-xs font-bold text-white/55">
+                <label
+                  htmlFor="serviceMode"
+                  className="mb-2 block text-xs font-bold text-white/55"
+                >
                   Service mode
                 </label>
 
                 <select
+                  id="serviceMode"
                   name="serviceMode"
                   value={form.serviceMode}
                   onChange={updateField}
                   className="h-14 w-full rounded-xl border border-white/10 bg-[#151515] px-4 text-sm outline-none focus:border-[#d4a72c]/70"
                 >
-                  <option value="parcel">Parcel</option>
-                  <option value="air">Air freight</option>
-                  <option value="ocean">Ocean freight</option>
-                  <option value="rail">Rail freight</option>
-                  <option value="express">Express</option>
+                  <option value="parcel">
+                    Parcel
+                  </option>
+
+                  <option value="air">
+                    Air freight
+                  </option>
+
+                  <option value="ocean">
+                    Ocean freight
+                  </option>
+
+                  <option value="rail">
+                    Rail freight
+                  </option>
+
+                  <option value="express">
+                    Express
+                  </option>
                 </select>
               </div>
 
               <FormField
-                label="Estimated delivery"
-                name="estimatedDelivery"
+                label="Departure date and time"
+                name="departureDate"
                 type="datetime-local"
-                value={form.estimatedDelivery}
+                value={form.departureDate}
+                onChange={updateField}
+                required
+              />
+
+              <FormField
+                label="Arrival date and time"
+                name="arrivalDate"
+                type="datetime-local"
+                value={form.arrivalDate}
                 onChange={updateField}
                 required
               />
@@ -438,7 +657,10 @@ export function CreateShipmentForm() {
           </FormSection>
 
           {error && (
-            <div className="rounded-2xl border border-red-400/20 bg-red-400/10 px-5 py-4 text-sm text-red-300">
+            <div
+              role="alert"
+              className="rounded-2xl border border-red-400/20 bg-red-400/10 px-5 py-4 text-sm text-red-300"
+            >
               {error}
             </div>
           )}
@@ -456,8 +678,9 @@ export function CreateShipmentForm() {
                 </p>
 
                 <p className="mt-1 text-xs leading-5 text-white/35">
-                  Checkpoints will be generated based on the
-                  selected transport method.
+                  Checkpoints will be distributed between
+                  the selected departure and arrival dates.
+                  Automatic progress will be enabled.
                 </p>
               </div>
             </div>
@@ -465,7 +688,7 @@ export function CreateShipmentForm() {
             <button
               type="submit"
               disabled={submitting}
-              className="flex h-13 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#d4a72c] px-7 text-sm font-black text-black transition hover:bg-[#efc95d] disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex h-14 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#d4a72c] px-7 text-sm font-black text-black transition hover:bg-[#efc95d] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {submitting ? (
                 <LoaderCircle
@@ -488,10 +711,10 @@ export function CreateShipmentForm() {
 }
 
 type FormSectionProps = {
-  icon: React.ReactNode;
+  icon: ReactNode;
   title: string;
   description: string;
-  children: React.ReactNode;
+  children: ReactNode;
 };
 
 function FormSection({
@@ -530,7 +753,7 @@ type FormFieldProps = {
   placeholder?: string;
   required?: boolean;
   onChange: (
-    event: React.ChangeEvent<HTMLInputElement>,
+    event: ChangeEvent<HTMLInputElement>,
   ) => void;
 };
 

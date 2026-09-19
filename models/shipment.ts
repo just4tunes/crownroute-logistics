@@ -1,10 +1,4 @@
-import {
-  Document,
-  Model,
-  Schema,
-  model,
-  models,
-} from "mongoose";
+import { Document, Model, Schema, model, models } from "mongoose";
 
 export type ShipmentStatus =
   | "created"
@@ -17,10 +11,9 @@ export type ShipmentStatus =
   | "delivered"
   | "cancelled";
 
-export type CheckpointStatus =
-  | "pending"
-  | "active"
-  | "completed";
+export type CheckpointStatus = "pending" | "active" | "completed";
+
+export type UpdateSource = "admin" | "automatic";
 
 export type NotificationType =
   | "information"
@@ -38,6 +31,7 @@ export type ShipmentCheckpoint = {
   estimatedArrival?: Date;
   completedAt?: Date;
   status: CheckpointStatus;
+  completionSource?: UpdateSource;
 };
 
 export type ShipmentNotification = {
@@ -85,17 +79,28 @@ export interface IShipment extends Document {
   weight?: number;
   serviceMode: string;
   status: ShipmentStatus;
+
+  departureDate?: Date;
+  arrivalDate?: Date;
+
+  // Kept for compatibility with shipments created before
+  // departureDate and arrivalDate were introduced.
   estimatedDelivery?: Date;
+
   progress: number;
+  autoProgressEnabled: boolean;
+  lastAutomaticUpdateAt?: Date;
 
   currentLocation?: {
     name?: string;
     latitude?: number;
     longitude?: number;
+    source?: UpdateSource;
   };
 
   checkpoints: ShipmentCheckpoint[];
   notifications: ShipmentNotification[];
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -136,13 +141,23 @@ const checkpointSchema = new Schema<ShipmentCheckpoint>(
       trim: true,
     },
 
-    estimatedArrival: Date,
-    completedAt: Date,
+    estimatedArrival: {
+      type: Date,
+    },
+
+    completedAt: {
+      type: Date,
+    },
 
     status: {
       type: String,
       enum: ["pending", "active", "completed"],
       default: "pending",
+    },
+
+    completionSource: {
+      type: String,
+      enum: ["admin", "automatic"],
     },
   },
   {
@@ -257,9 +272,18 @@ const shipmentSchema = new Schema<IShipment>(
         trim: true,
       },
 
-      address: String,
-      latitude: Number,
-      longitude: Number,
+      address: {
+        type: String,
+        trim: true,
+      },
+
+      latitude: {
+        type: Number,
+      },
+
+      longitude: {
+        type: Number,
+      },
     },
 
     destination: {
@@ -275,9 +299,18 @@ const shipmentSchema = new Schema<IShipment>(
         trim: true,
       },
 
-      address: String,
-      latitude: Number,
-      longitude: Number,
+      address: {
+        type: String,
+        trim: true,
+      },
+
+      latitude: {
+        type: Number,
+      },
+
+      longitude: {
+        type: Number,
+      },
     },
 
     packageDescription: {
@@ -313,7 +346,17 @@ const shipmentSchema = new Schema<IShipment>(
       default: "created",
     },
 
-    estimatedDelivery: Date,
+    departureDate: {
+      type: Date,
+    },
+
+    arrivalDate: {
+      type: Date,
+    },
+
+    estimatedDelivery: {
+      type: Date,
+    },
 
     progress: {
       type: Number,
@@ -322,10 +365,33 @@ const shipmentSchema = new Schema<IShipment>(
       max: 100,
     },
 
+    autoProgressEnabled: {
+      type: Boolean,
+      default: true,
+    },
+
+    lastAutomaticUpdateAt: {
+      type: Date,
+    },
+
     currentLocation: {
-      name: String,
-      latitude: Number,
-      longitude: Number,
+      name: {
+        type: String,
+        trim: true,
+      },
+
+      latitude: {
+        type: Number,
+      },
+
+      longitude: {
+        type: Number,
+      },
+
+      source: {
+        type: String,
+        enum: ["admin", "automatic"],
+      },
     },
 
     checkpoints: {
@@ -344,5 +410,4 @@ const shipmentSchema = new Schema<IShipment>(
 );
 
 export const Shipment: Model<IShipment> =
-  models.Shipment ||
-  model<IShipment>("Shipment", shipmentSchema);
+  models.Shipment || model<IShipment>("Shipment", shipmentSchema);

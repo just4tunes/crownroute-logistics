@@ -21,7 +21,8 @@ type GenerateRouteInput = {
   serviceMode: ServiceMode;
   origin: RouteLocation;
   destination: RouteLocation;
-  estimatedDelivery: Date;
+  departureDate: Date;
+  arrivalDate: Date;
 };
 
 type RouteTemplate = {
@@ -211,16 +212,32 @@ export function generateRouteCheckpoints({
   serviceMode,
   origin,
   destination,
-  estimatedDelivery,
+  departureDate,
+  arrivalDate,
 }: GenerateRouteInput): ShipmentCheckpoint[] {
   const template = templates[serviceMode];
 
-  const startTime = Date.now();
-  const deliveryTime = estimatedDelivery.getTime();
-  const totalDuration = Math.max(
-    deliveryTime - startTime,
-    60 * 60 * 1000,
-  );
+  if (!template) {
+    throw new Error(`Unsupported service mode: ${serviceMode}`);
+  }
+
+  const departureTime = departureDate.getTime();
+  const arrivalTime = arrivalDate.getTime();
+
+  if (
+    Number.isNaN(departureTime) ||
+    Number.isNaN(arrivalTime)
+  ) {
+    throw new Error("Departure and arrival dates must be valid.");
+  }
+
+  if (arrivalTime <= departureTime) {
+    throw new Error(
+      "Arrival date must be later than the departure date.",
+    );
+  }
+
+  const totalDuration = arrivalTime - departureTime;
 
   const middleLatitude =
     (origin.latitude + destination.latitude) / 2;
@@ -235,7 +252,7 @@ export function generateRouteCheckpoints({
         : index / (template.length - 1);
 
     const estimatedArrival = new Date(
-      startTime + totalDuration * progressPosition,
+      departureTime + totalDuration * progressPosition,
     );
 
     let city = origin.city;

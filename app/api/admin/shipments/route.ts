@@ -12,6 +12,7 @@ export const dynamic = "force-dynamic";
 
 const shipmentSchema = z.object({
   senderName: z.string().trim().min(2).max(100),
+
   senderEmail: z
     .string()
     .trim()
@@ -20,6 +21,7 @@ const shipmentSchema = z.object({
     .or(z.literal("")),
 
   recipientName: z.string().trim().min(2).max(100),
+
   recipientEmail: z
     .string()
     .trim()
@@ -39,10 +41,7 @@ const shipmentSchema = z.object({
 
   packageDescription: z.string().trim().min(2).max(300),
 
-  weight: z
-    .number()
-    .positive()
-    .optional(),
+  weight: z.number().positive().optional(),
 
   serviceMode: z.enum([
     "parcel",
@@ -52,7 +51,10 @@ const shipmentSchema = z.object({
     "express",
   ]),
 
-  estimatedDelivery: z.string().datetime(),
+  departureDate: z.string().datetime(),
+  arrivalDate: z.string().datetime(),
+
+  autoProgressEnabled: z.boolean().optional().default(true),
 });
 
 async function authorizeAdmin() {
@@ -95,7 +97,20 @@ export async function GET() {
         createdAt: -1,
       })
       .select(
-        "trackingNumber recipient origin destination serviceMode status progress estimatedDelivery createdAt",
+        [
+          "trackingNumber",
+          "recipient",
+          "origin",
+          "destination",
+          "serviceMode",
+          "status",
+          "progress",
+          "departureDate",
+          "arrivalDate",
+          "estimatedDelivery",
+          "autoProgressEnabled",
+          "createdAt",
+        ].join(" "),
       )
       .lean();
 
@@ -151,7 +166,22 @@ export async function POST(request: Request) {
     }
 
     const data = result.data;
-    const estimatedDelivery = new Date(data.estimatedDelivery);
+
+    const departureDate = new Date(data.departureDate);
+    const arrivalDate = new Date(data.arrivalDate);
+
+    if (arrivalDate.getTime() <= departureDate.getTime()) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "The arrival date must be later than the departure date.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
 
     const origin = {
       city: data.originCity,
@@ -171,7 +201,8 @@ export async function POST(request: Request) {
       serviceMode: data.serviceMode,
       origin,
       destination,
-      estimatedDelivery,
+      departureDate,
+      arrivalDate,
     });
 
     let trackingNumber = generateTrackingNumber();
@@ -183,6 +214,13 @@ export async function POST(request: Request) {
     ) {
       trackingNumber = generateTrackingNumber();
     }
+
+    const now = new Date();
+
+    const initialStatus =
+      departureDate.getTime() <= now.getTime()
+        ? "in_transit"
+        : "processing";
 
     const shipment = await Shipment.create({
       trackingNumber,
@@ -203,14 +241,23 @@ export async function POST(request: Request) {
       packageDescription: data.packageDescription,
       weight: data.weight,
       serviceMode: data.serviceMode,
-      status: "processing",
-      estimatedDelivery,
+      status: initialStatus,
+
+      departureDate,
+      arrivalDate,
+
+      // Kept so older tracking components that still use
+      // estimatedDelivery continue to work.
+      estimatedDelivery: arrivalDate,
+
       progress: 0,
+      autoProgressEnabled: data.autoProgressEnabled,
 
       currentLocation: {
         name: `${origin.city}, ${origin.country}`,
         latitude: origin.latitude,
         longitude: origin.longitude,
+        source: "admin",
       },
 
       checkpoints,
@@ -222,7 +269,7 @@ export async function POST(request: Request) {
             "Your shipment has been registered with CrownRoute Logistics.",
           type: "information",
           showAsPopup: false,
-          createdAt: new Date(),
+          createdAt: now,
         },
       ],
     });
@@ -234,6 +281,9 @@ export async function POST(request: Request) {
         shipment: {
           id: shipment._id.toString(),
           trackingNumber: shipment.trackingNumber,
+          departureDate: shipment.departureDate,
+          arrivalDate: shipment.arrivalDate,
+          autoProgressEnabled: shipment.autoProgressEnabled,
         },
       },
       {
@@ -243,10 +293,15 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Create shipment error:", error);
 
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Unable to create the shipment.";
+
     return NextResponse.json(
       {
         success: false,
-        error: "Unable to create the shipment.",
+        error: message,
       },
       {
         status: 500,
