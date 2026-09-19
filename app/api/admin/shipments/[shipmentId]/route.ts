@@ -10,6 +10,7 @@ import {
   type ShipmentCheckpoint,
 } from "@/models/shipment";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
@@ -30,46 +31,81 @@ const shipmentStatuses = [
   "cancelled",
 ] as const;
 
-const updateSchema = z.discriminatedUnion("action", [
-  z.object({
-    action: z.literal("update_status"),
-    status: z.enum(shipmentStatuses),
-  }),
+const updateSchema = z.discriminatedUnion(
+  "action",
+  [
+    z.object({
+      action: z.literal("update_status"),
+      status: z.enum(shipmentStatuses),
+    }),
 
-  z.object({
-    action: z.literal("complete_checkpoint"),
-    checkpointId: z.string().min(1),
-  }),
+    z.object({
+      action: z.literal(
+        "complete_checkpoint",
+      ),
+      checkpointId: z.string().min(1),
+    }),
 
-  z.object({
-    action: z.literal("record_location"),
-    checkpointId: z.string().min(1),
-    locationName: z.string().trim().min(2).max(150),
-    latitude: z.number().min(-90).max(90),
-    longitude: z.number().min(-180).max(180),
-  }),
+    z.object({
+      action: z.literal("record_location"),
+      checkpointId: z.string().min(1),
 
-  z.object({
-    action: z.literal("add_notification"),
-    title: z.string().trim().min(2).max(120),
-    message: z.string().trim().min(2).max(500),
-    type: z.enum([
-      "information",
-      "success",
-      "warning",
-      "critical",
-    ]),
-    showAsPopup: z.boolean(),
-  }),
-]);
+      locationName: z
+        .string()
+        .trim()
+        .min(2)
+        .max(150),
 
-type CheckpointWithId = ShipmentCheckpoint & {
-  _id?: {
-    toString(): string;
+      latitude: z
+        .number()
+        .min(-90)
+        .max(90),
+
+      longitude: z
+        .number()
+        .min(-180)
+        .max(180),
+    }),
+
+    z.object({
+      action: z.literal(
+        "add_notification",
+      ),
+
+      title: z
+        .string()
+        .trim()
+        .min(2)
+        .max(120),
+
+      message: z
+        .string()
+        .trim()
+        .min(2)
+        .max(500),
+
+      type: z.enum([
+        "information",
+        "success",
+        "warning",
+        "critical",
+      ]),
+
+      showAsPopup: z.boolean(),
+    }),
+  ],
+);
+
+type CheckpointWithId =
+  ShipmentCheckpoint & {
+    _id?: {
+      toString(): string;
+    };
   };
-};
 
-function checkpointId(checkpoint: ShipmentCheckpoint) {
+function getCheckpointId(
+  checkpoint: ShipmentCheckpoint,
+) {
   return (
     checkpoint as CheckpointWithId
   )._id?.toString();
@@ -111,7 +147,8 @@ export async function PATCH(
       );
     }
 
-    const { shipmentId } = await context.params;
+    const { shipmentId } =
+      await context.params;
 
     if (!isValidObjectId(shipmentId)) {
       return NextResponse.json(
@@ -126,14 +163,18 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const result = updateSchema.safeParse(body);
+
+    const result =
+      updateSchema.safeParse(body);
 
     if (!result.success) {
       return NextResponse.json(
         {
           success: false,
-          error: "Invalid shipment update.",
-          details: result.error.flatten(),
+          error:
+            "Invalid shipment update.",
+          details:
+            result.error.flatten(),
         },
         {
           status: 400,
@@ -141,7 +182,10 @@ export async function PATCH(
       );
     }
 
-    const shipment = await Shipment.findById(shipmentId);
+    const shipment =
+      await Shipment.findById(
+        shipmentId,
+      );
 
     if (!shipment) {
       return NextResponse.json(
@@ -156,40 +200,164 @@ export async function PATCH(
     }
 
     const update = result.data;
+    const currentTime = new Date();
 
-    if (update.action === "update_status") {
-      shipment.status = update.status;
+    if (
+      update.action ===
+      "update_status"
+    ) {
+      const previousStatus =
+        shipment.status;
 
-      if (update.status === "delivered") {
+      shipment.status =
+        update.status;
+
+      if (
+        update.status ===
+        "delivered"
+      ) {
         shipment.progress = 100;
 
-        shipment.checkpoints.forEach((checkpoint) => {
-          checkpoint.status = "completed";
+        shipment.checkpoints.forEach(
+          (checkpoint) => {
+            const wasAlreadyCompleted =
+              checkpoint.status ===
+              "completed";
 
-          if (!checkpoint.completedAt) {
-            checkpoint.completedAt = new Date();
-          }
-        });
+            checkpoint.status =
+              "completed";
 
+            if (
+              !checkpoint.completedAt
+            ) {
+              checkpoint.completedAt =
+                currentTime;
+            }
+
+            if (
+              !wasAlreadyCompleted ||
+              !checkpoint.completionSource
+            ) {
+              checkpoint.completionSource =
+                "admin";
+            }
+          },
+        );
+
+        const finalCheckpoint =
+          shipment.checkpoints[
+            shipment.checkpoints.length -
+              1
+          ];
+
+        if (finalCheckpoint) {
+          shipment.currentLocation = {
+            name:
+              finalCheckpoint.location,
+            latitude:
+              finalCheckpoint.latitude,
+            longitude:
+              finalCheckpoint.longitude,
+            source: "admin",
+          };
+        }
+
+        if (
+          previousStatus !==
+          "delivered"
+        ) {
+          shipment.notifications.push({
+            title:
+              "Shipment delivered",
+            message:
+              "Your shipment has been successfully delivered.",
+            type: "success",
+            showAsPopup: true,
+            createdAt: currentTime,
+          });
+        }
+
+        shipment.markModified(
+          "checkpoints",
+        );
+
+        shipment.markModified(
+          "currentLocation",
+        );
+
+        shipment.markModified(
+          "notifications",
+        );
+      }
+
+      if (
+        update.status === "held" &&
+        previousStatus !== "held"
+      ) {
         shipment.notifications.push({
-          title: "Shipment delivered",
+          title: "Shipment held",
           message:
-            "Your shipment has been successfully delivered.",
-          type: "success",
+            "Your shipment has been temporarily held. Further information will be provided.",
+          type: "warning",
           showAsPopup: true,
-          createdAt: new Date(),
+          createdAt: currentTime,
         });
 
-        shipment.markModified("checkpoints");
-        shipment.markModified("notifications");
+        shipment.markModified(
+          "notifications",
+        );
+      }
+
+      if (
+        update.status === "delayed" &&
+        previousStatus !== "delayed"
+      ) {
+        shipment.notifications.push({
+          title: "Shipment delayed",
+          message:
+            "Your shipment has experienced a delay. The tracking schedule will continue after the delay is resolved.",
+          type: "warning",
+          showAsPopup: true,
+          createdAt: currentTime,
+        });
+
+        shipment.markModified(
+          "notifications",
+        );
+      }
+
+      if (
+        update.status ===
+          "cancelled" &&
+        previousStatus !==
+          "cancelled"
+      ) {
+        shipment.notifications.push({
+          title:
+            "Shipment cancelled",
+          message:
+            "This shipment has been cancelled.",
+          type: "critical",
+          showAsPopup: true,
+          createdAt: currentTime,
+        });
+
+        shipment.markModified(
+          "notifications",
+        );
       }
     }
 
-    if (update.action === "record_location") {
+    if (
+      update.action ===
+      "record_location"
+    ) {
       const selectedCheckpoint =
         shipment.checkpoints.find(
           (checkpoint) =>
-            checkpointId(checkpoint) ===
+            getCheckpointId(
+              checkpoint,
+            ) ===
             update.checkpointId,
         );
 
@@ -197,7 +365,8 @@ export async function PATCH(
         return NextResponse.json(
           {
             success: false,
-            error: "Checkpoint not found.",
+            error:
+              "Checkpoint not found.",
           },
           {
             status: 404,
@@ -218,17 +387,28 @@ export async function PATCH(
         name: update.locationName,
         latitude: update.latitude,
         longitude: update.longitude,
+        source: "admin",
       };
 
-      shipment.markModified("checkpoints");
-      shipment.markModified("currentLocation");
+      shipment.markModified(
+        "checkpoints",
+      );
+
+      shipment.markModified(
+        "currentLocation",
+      );
     }
 
-    if (update.action === "complete_checkpoint") {
+    if (
+      update.action ===
+      "complete_checkpoint"
+    ) {
       const selectedIndex =
         shipment.checkpoints.findIndex(
           (checkpoint) =>
-            checkpointId(checkpoint) ===
+            getCheckpointId(
+              checkpoint,
+            ) ===
             update.checkpointId,
         );
 
@@ -236,7 +416,8 @@ export async function PATCH(
         return NextResponse.json(
           {
             success: false,
-            error: "Checkpoint not found.",
+            error:
+              "Checkpoint not found.",
           },
           {
             status: 404,
@@ -245,9 +426,14 @@ export async function PATCH(
       }
 
       const selectedCheckpoint =
-        shipment.checkpoints[selectedIndex];
+        shipment.checkpoints[
+          selectedIndex
+        ];
 
-      if (selectedCheckpoint.status !== "active") {
+      if (
+        selectedCheckpoint.status !==
+        "active"
+      ) {
         return NextResponse.json(
           {
             success: false,
@@ -260,41 +446,67 @@ export async function PATCH(
         );
       }
 
-      selectedCheckpoint.status = "completed";
-      selectedCheckpoint.completedAt = new Date();
+      selectedCheckpoint.status =
+        "completed";
+
+      selectedCheckpoint.completedAt =
+        currentTime;
+
+      selectedCheckpoint.completionSource =
+        "admin";
 
       shipment.currentLocation = {
-        name: selectedCheckpoint.location,
-        latitude: selectedCheckpoint.latitude,
-        longitude: selectedCheckpoint.longitude,
+        name:
+          selectedCheckpoint.location,
+        latitude:
+          selectedCheckpoint.latitude,
+        longitude:
+          selectedCheckpoint.longitude,
+        source: "admin",
       };
 
       const nextCheckpoint =
-        shipment.checkpoints[selectedIndex + 1];
+        shipment.checkpoints[
+          selectedIndex + 1
+        ];
 
       if (nextCheckpoint) {
-        nextCheckpoint.status = "active";
+        nextCheckpoint.status =
+          "active";
 
         if (
-          shipment.status === "created" ||
-          shipment.status === "processing"
+          shipment.status ===
+            "created" ||
+          shipment.status ===
+            "processing" ||
+          shipment.status ===
+            "held" ||
+          shipment.status ===
+            "delayed"
         ) {
-          shipment.status = "in_transit";
+          shipment.status =
+            "in_transit";
         }
       } else {
-        shipment.status = "delivered";
+        shipment.status =
+          "delivered";
       }
 
       const completedCount =
         shipment.checkpoints.filter(
           (checkpoint) =>
-            checkpoint.status === "completed",
+            checkpoint.status ===
+            "completed",
         ).length;
 
-      shipment.progress = Math.round(
-        (completedCount /
-          shipment.checkpoints.length) *
-          100,
+      shipment.progress = Math.min(
+        100,
+        Math.round(
+          (completedCount /
+            shipment.checkpoints
+              .length) *
+            100,
+        ),
       );
 
       if (!nextCheckpoint) {
@@ -314,45 +526,67 @@ export async function PATCH(
           ? "information"
           : "success",
 
-        showAsPopup: !nextCheckpoint,
-        createdAt: new Date(),
+        showAsPopup:
+          !nextCheckpoint,
+
+        createdAt: currentTime,
       });
 
-      shipment.markModified("checkpoints");
-      shipment.markModified("currentLocation");
-      shipment.markModified("notifications");
+      shipment.markModified(
+        "checkpoints",
+      );
+
+      shipment.markModified(
+        "currentLocation",
+      );
+
+      shipment.markModified(
+        "notifications",
+      );
     }
 
-    if (update.action === "add_notification") {
+    if (
+      update.action ===
+      "add_notification"
+    ) {
       shipment.notifications.push({
         title: update.title,
         message: update.message,
         type: update.type,
-        showAsPopup: update.showAsPopup,
-        createdAt: new Date(),
+        showAsPopup:
+          update.showAsPopup,
+        createdAt: currentTime,
       });
 
-      shipment.markModified("notifications");
+      shipment.markModified(
+        "notifications",
+      );
     }
 
     await shipment.save();
 
     return NextResponse.json({
       success: true,
-      message: "Shipment updated successfully.",
-      shipment,
+      message:
+        "Shipment updated successfully.",
+      shipment:
+        shipment.toObject(),
     });
   } catch (error) {
-    console.error("Update shipment error:", error);
+    console.error(
+      "Update shipment error:",
+      error,
+    );
 
     return NextResponse.json(
       {
         success: false,
-        error: "Unable to update the shipment.",
+        error:
+          "Unable to update the shipment.",
       },
       {
         status: 500,
       },
     );
   }
-}
+} 
