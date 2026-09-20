@@ -21,33 +21,51 @@ const initialForm = {
   website: "",
 };
 
+type ContactFormState = typeof initialForm;
+
 export function ContactForm() {
   const [form, setForm] =
-    useState(initialForm);
+    useState<ContactFormState>(initialForm);
 
   const [submitting, setSubmitting] =
     useState(false);
 
-  const [error, setError] =
-    useState("");
-
-  const [success, setSuccess] =
-    useState("");
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
   function updateField(
     event: ChangeEvent<
-      HTMLInputElement |
-      HTMLTextAreaElement |
-      HTMLSelectElement
+      | HTMLInputElement
+      | HTMLTextAreaElement
+      | HTMLSelectElement
     >,
   ) {
-    const { name, value } =
-      event.target;
+    const { name, value } = event.target;
 
     setForm((current) => ({
       ...current,
       [name]: value,
     }));
+  }
+
+  function validateForm() {
+    if (form.name.trim().length < 2) {
+      return "Please enter your full name.";
+    }
+
+    if (
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+        form.email.trim(),
+      )
+    ) {
+      return "Please enter a valid email address.";
+    }
+
+    if (form.message.trim().length < 10) {
+      return "Your message must contain at least 10 characters.";
+    }
+
+    return "";
   }
 
   async function handleSubmit(
@@ -59,22 +77,26 @@ export function ContactForm() {
       return;
     }
 
+    const validationError = validateForm();
+
+    if (validationError) {
+      setError(validationError);
+      setSuccess("");
+      return;
+    }
+
     setError("");
     setSuccess("");
     setSubmitting(true);
 
     try {
-      const response = await fetch(
-        "/api/contact",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-          body: JSON.stringify(form),
+      const response = await fetch("/api/contact", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      );
+        body: JSON.stringify(form),
+      });
 
       const data = await response
         .json()
@@ -85,7 +107,6 @@ export function ContactForm() {
           data?.error ??
             "Unable to send your enquiry.",
         );
-
         return;
       }
 
@@ -102,7 +123,7 @@ export function ContactForm() {
       );
 
       setError(
-        "Unable to connect to the server.",
+        "Unable to connect to the server. Please try again.",
       );
     } finally {
       setSubmitting(false);
@@ -167,27 +188,21 @@ export function ContactForm() {
             <option value="general">
               General enquiry
             </option>
-
             <option value="parcel">
               Parcel delivery
             </option>
-
             <option value="air">
               Air freight
             </option>
-
             <option value="ocean">
               Ocean freight
             </option>
-
             <option value="rail">
               Rail freight
             </option>
-
             <option value="express">
               Express delivery
             </option>
-
             <option value="freight">
               Freight coordination
             </option>
@@ -208,6 +223,8 @@ export function ContactForm() {
             value={form.message}
             onChange={updateField}
             required
+            minLength={10}
+            maxLength={2000}
             rows={6}
             placeholder="Tell us what you are shipping, the origin, destination and expected delivery date."
             className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm leading-6 outline-none transition placeholder:text-white/20 focus:border-[#d4a72c]/70"
@@ -218,9 +235,7 @@ export function ContactForm() {
           className="absolute -left-[9999px]"
           aria-hidden="true"
         >
-          <label htmlFor="website">
-            Website
-          </label>
+          <label htmlFor="website">Website</label>
 
           <input
             id="website"
@@ -293,7 +308,7 @@ function FormField({
   value,
   type = "text",
   placeholder,
-  required,
+  required = false,
   onChange,
 }: FormFieldProps) {
   return (

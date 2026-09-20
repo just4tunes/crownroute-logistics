@@ -35,6 +35,24 @@ function getStatusFromCheckpoint(
   return "in_transit";
 }
 
+function calculateTimeProgress(
+  now: number,
+  departureTime: number,
+  arrivalTime: number,
+) {
+  if (arrivalTime <= departureTime) {
+    return 0;
+  }
+
+  const elapsedTime = Math.max(0, now - departureTime);
+  const totalDuration = arrivalTime - departureTime;
+  const rawProgress = (elapsedTime / totalDuration) * 100;
+
+  return Number(
+    Math.min(99, Math.max(0, rawProgress)).toFixed(2),
+  );
+}
+
 export function applyAutomaticShipmentProgress(
   shipment: IShipment,
   currentTime = new Date(),
@@ -43,6 +61,8 @@ export function applyAutomaticShipmentProgress(
     return false;
   }
 
+  // Held, delayed and cancelled shipments keep their current
+  // percentage until an administrator resumes them.
   if (pausedStatuses.includes(shipment.status)) {
     return false;
   }
@@ -59,7 +79,6 @@ export function applyAutomaticShipmentProgress(
   const departureTime = new Date(
     shipment.departureDate,
   ).getTime();
-
   const arrivalTime = new Date(
     shipment.arrivalDate,
   ).getTime();
@@ -105,7 +124,6 @@ export function applyAutomaticShipmentProgress(
       checkpoint.status = "completed";
       checkpoint.completedAt = currentTime;
       checkpoint.completionSource = "automatic";
-
       automaticallyCompletedCheckpoint = checkpoint;
       changed = true;
     }
@@ -134,27 +152,40 @@ export function applyAutomaticShipmentProgress(
     }
   }
 
-  const newProgress = Math.min(
-    100,
-    Math.round(
-      (completedCheckpoints.length /
-        shipment.checkpoints.length) *
-        100,
-    ),
+  const checkpointProgress =
+    (completedCheckpoints.length /
+      shipment.checkpoints.length) *
+    100;
+
+  const timeProgress = calculateTimeProgress(
+    now,
+    departureTime,
+    arrivalTime,
   );
 
-  if (shipment.progress !== newProgress) {
-    shipment.progress = newProgress;
+  // Never move backwards. Manual checkpoint completion can place
+  // the shipment ahead of the time-based schedule.
+  const interpolatedProgress = Number(
+    Math.min(
+      99,
+      Math.max(
+        shipment.progress || 0,
+        checkpointProgress,
+        timeProgress,
+      ),
+    ).toFixed(2),
+  );
+
+  if (shipment.progress !== interpolatedProgress) {
+    shipment.progress = interpolatedProgress;
     changed = true;
   }
 
   if (automaticallyCompletedCheckpoint) {
     shipment.currentLocation = {
       name: `${automaticallyCompletedCheckpoint.location}, ${automaticallyCompletedCheckpoint.city}, ${automaticallyCompletedCheckpoint.country}`,
-      latitude:
-        automaticallyCompletedCheckpoint.latitude,
-      longitude:
-        automaticallyCompletedCheckpoint.longitude,
+      latitude: automaticallyCompletedCheckpoint.latitude,
+      longitude: automaticallyCompletedCheckpoint.longitude,
       source: "automatic",
     };
   }

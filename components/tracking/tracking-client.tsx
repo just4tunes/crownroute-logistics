@@ -1,7 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -66,8 +71,11 @@ type Shipment = {
   weight?: number;
   serviceMode: string;
   status: string;
+  departureDate?: string;
+  arrivalDate?: string;
   estimatedDelivery?: string;
   progress: number;
+  autoProgressEnabled?: boolean;
 
   currentLocation?: {
     name?: string;
@@ -101,52 +109,79 @@ export function TrackingClient({
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [visualProgress, setVisualProgress] =
+    useState(0);
   const [popupDismissed, setPopupDismissed] =
     useState(false);
 
-  async function loadShipment(number: string) {
-    const normalizedNumber = number.trim().toUpperCase();
+  const loadShipment = useCallback(
+    async (
+      number: string,
+      options: {
+        silent?: boolean;
+        resetPopup?: boolean;
+      } = {},
+    ) => {
+      const normalizedNumber = number.trim().toUpperCase();
 
-    if (!normalizedNumber) {
-      return;
-    }
-
-    setLoading(true);
-    setError("");
-    setShipment(null);
-    setSearched(true);
-    setPopupDismissed(false);
-
-    try {
-      const response = await fetch(
-        `/api/tracking/${encodeURIComponent(
-          normalizedNumber,
-        )}`,
-        {
-          method: "GET",
-          cache: "no-store",
-        },
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setError(
-          data.error ?? "Shipment could not be found.",
-        );
-
+      if (!normalizedNumber) {
         return;
       }
 
-      setShipment(data.shipment);
-    } catch {
-      setError(
-        "Unable to connect to the tracking service.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
+      const silent = options.silent ?? false;
+      const resetPopup = options.resetPopup ?? !silent;
+
+      if (!silent) {
+        setLoading(true);
+        setShipment(null);
+      }
+
+      setError("");
+      setSearched(true);
+
+      if (resetPopup) {
+        setPopupDismissed(false);
+      }
+
+      try {
+        const response = await fetch(
+          `/api/tracking/${encodeURIComponent(
+            normalizedNumber,
+          )}`,
+          {
+            method: "GET",
+            cache: "no-store",
+          },
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          if (!silent) {
+            setError(
+              data.error ??
+                "Shipment could not be found.",
+            );
+          }
+
+          return;
+        }
+
+        setShipment(data.shipment);
+      } catch {
+        if (!silent) {
+          setError(
+            "Unable to connect to the tracking service.",
+          );
+        }
+      } finally {
+        if (!silent) {
+          setLoading(false);
+        }
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!initialNumber.trim()) {
@@ -154,8 +189,98 @@ export function TrackingClient({
     }
 
     void loadShipment(initialNumber);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialNumber]);
+  }, [initialNumber, loadShipment]);
+
+  useEffect(() => {
+    const activeTrackingNumber =
+      shipment?.trackingNumber;
+
+    if (!activeTrackingNumber) {
+      return;
+    }
+
+    const refreshTimer = window.setInterval(() => {
+      void loadShipment(activeTrackingNumber, {
+        silent: true,
+        resetPopup: false,
+      });
+    }, 30_000);
+
+    return () => {
+      window.clearInterval(refreshTimer);
+    };
+  }, [shipment?.trackingNumber, loadShipment]);
+
+  useEffect(() => {
+    if (!shipment) {
+      setVisualProgress(0);
+      return;
+    }
+
+    const updateVisualProgress = () => {
+      if (shipment.status === "delivered") {
+        setVisualProgress(100);
+        return;
+      }
+
+      if (
+        ["held", "delayed", "cancelled"].includes(
+          shipment.status,
+        ) ||
+        !shipment.departureDate ||
+        !shipment.arrivalDate
+      ) {
+        setVisualProgress(shipment.progress);
+        return;
+      }
+
+      const departureTime = new Date(
+        shipment.departureDate,
+      ).getTime();
+      const arrivalTime = new Date(
+        shipment.arrivalDate,
+      ).getTime();
+      const currentTime = Date.now();
+
+      if (
+        Number.isNaN(departureTime) ||
+        Number.isNaN(arrivalTime) ||
+        arrivalTime <= departureTime ||
+        currentTime < departureTime
+      ) {
+        setVisualProgress(shipment.progress);
+        return;
+      }
+
+      const timeProgress =
+        ((currentTime - departureTime) /
+          (arrivalTime - departureTime)) *
+        100;
+
+      setVisualProgress(
+        Number(
+          Math.min(
+            99,
+            Math.max(
+              shipment.progress,
+              timeProgress,
+            ),
+          ).toFixed(2),
+        ),
+      );
+    };
+
+    updateVisualProgress();
+
+    const visualTimer = window.setInterval(
+      updateVisualProgress,
+      1_000,
+    );
+
+    return () => {
+      window.clearInterval(visualTimer);
+    };
+  }, [shipment]);
 
   function handleSubmit(
     event: FormEvent<HTMLFormElement>,
@@ -185,6 +310,12 @@ export function TrackingClient({
       .reverse()
       .find((notification) => notification.showAsPopup) ??
     null;
+
+  const liveTrackingPaused = shipment
+    ? ["held", "delayed", "cancelled"].includes(
+        shipment.status,
+      )
+    : false;
 
   return (
     <main className="min-h-screen bg-[#080808] text-white">
@@ -340,6 +471,24 @@ export function TrackingClient({
                   {shipment.currentLocation?.name ??
                     `${shipment.origin.city}, ${shipment.origin.country}`}
                 </p>
+
+                <p className="mt-3 inline-flex items-center gap-2 text-xs font-bold text-blue-100/60">
+                  <span
+                    className={`h-2 w-2 rounded-full ${
+                      liveTrackingPaused
+                        ? "bg-amber-300"
+                        : shipment.status === "delivered"
+                          ? "bg-emerald-300"
+                          : "animate-pulse bg-blue-300"
+                    }`}
+                  />
+
+                  {liveTrackingPaused
+                    ? "Live progress paused"
+                    : shipment.status === "delivered"
+                      ? "Route completed"
+                      : "Live progress · refreshes every 30 seconds"}
+                </p>
               </div>
             </div>
           </div>
@@ -368,7 +517,7 @@ export function TrackingClient({
                     </p>
 
                     <p className="text-2xl font-black text-[#e6bd4f]">
-                      {shipment.progress}%
+                      {formatProgress(visualProgress)}%
                     </p>
                   </div>
 
@@ -377,7 +526,7 @@ export function TrackingClient({
                       className="h-full rounded-full bg-gradient-to-r from-[#98700f] to-[#f2cf68] transition-all duration-700"
                       style={{
                         width: `${Math.min(
-                          Math.max(shipment.progress, 0),
+                          Math.max(visualProgress, 0),
                           100,
                         )}%`,
                       }}
@@ -697,4 +846,15 @@ function formatDate(value?: string) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
+}
+
+function formatProgress(value: number) {
+  if (!Number.isFinite(value)) {
+    return "0";
+  }
+
+  return value
+    .toFixed(2)
+    .replace(/\.00$/, "")
+    .replace(/(\.\d)0$/, "$1");
 }

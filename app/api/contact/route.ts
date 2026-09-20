@@ -11,13 +11,13 @@ const contactSchema = z.object({
   name: z
     .string()
     .trim()
-    .min(2)
+    .min(2, "Please enter your full name.")
     .max(100),
 
   email: z
     .string()
     .trim()
-    .email()
+    .email("Please enter a valid email address.")
     .max(150),
 
   phone: z
@@ -47,7 +47,10 @@ const contactSchema = z.object({
   message: z
     .string()
     .trim()
-    .min(10)
+    .min(
+      10,
+      "Your message must contain at least 10 characters.",
+    )
     .max(2000),
 
   website: z
@@ -57,23 +60,26 @@ const contactSchema = z.object({
     .or(z.literal("")),
 });
 
-export async function POST(
-  request: Request,
-) {
+export async function POST(request: Request) {
   try {
     const body = await request.json();
-
-    const result =
-      contactSchema.safeParse(body);
+    const result = contactSchema.safeParse(body);
 
     if (!result.success) {
+      const fieldErrors =
+        result.error.flatten().fieldErrors;
+
+      const firstError = Object.values(fieldErrors)
+        .flat()
+        .find(Boolean);
+
       return NextResponse.json(
         {
           success: false,
           error:
+            firstError ??
             "Check your information and try again.",
-          details:
-            result.error.flatten(),
+          details: fieldErrors,
         },
         {
           status: 400,
@@ -83,13 +89,18 @@ export async function POST(
 
     const data = result.data;
 
-    // Hidden spam-trap field.
+    // Honeypot field: silently accept bot submissions.
     if (data.website) {
-      return NextResponse.json({
-        success: true,
-        message:
-          "Your enquiry has been received.",
-      });
+      return NextResponse.json(
+        {
+          success: true,
+          message:
+            "Your enquiry has been received.",
+        },
+        {
+          status: 201,
+        },
+      );
     }
 
     await connectToDatabase();
@@ -97,10 +108,8 @@ export async function POST(
     await ContactInquiry.create({
       name: data.name,
       email: data.email,
-      phone:
-        data.phone || undefined,
-      company:
-        data.company || undefined,
+      phone: data.phone || undefined,
+      company: data.company || undefined,
       service: data.service,
       message: data.message,
       status: "new",
