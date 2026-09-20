@@ -14,6 +14,7 @@ import {
   TriangleAlert,
   Truck,
   Users,
+  Mail,
 } from "lucide-react";
 
 import { LogoutButton } from "@/components/admin/logout-button";
@@ -21,6 +22,7 @@ import { getAdminSession } from "@/lib/admin-auth";
 import { connectToDatabase } from "@/lib/db";
 import { Admin } from "@/models/admin";
 import { Shipment } from "@/models/shipment";
+import { ContactInquiry } from "@/models/contact-inquiry";
 
 export const dynamic = "force-dynamic";
 
@@ -77,6 +79,11 @@ const sidebarLinks = [
     href: "/admin/admins",
     Icon: Users,
   },
+  {
+    label: "Messages",
+    href: "/admin/messages",
+    Icon: Mail,
+  },
 ];
 
 export default async function AdminDashboardPage() {
@@ -101,18 +108,14 @@ export default async function AdminDashboardPage() {
     activeShipments,
     deliveredShipments,
     attentionRequired,
+    newMessageCount,
     recentShipmentsResult,
   ] = await Promise.all([
     Shipment.countDocuments(),
 
     Shipment.countDocuments({
       status: {
-        $in: [
-          "processing",
-          "in_transit",
-          "customs",
-          "out_for_delivery",
-        ],
+        $in: ["processing", "in_transit", "customs", "out_for_delivery"],
       },
     }),
 
@@ -126,6 +129,10 @@ export default async function AdminDashboardPage() {
       },
     }),
 
+    ContactInquiry.countDocuments({
+      status: "new",
+    }),
+
     Shipment.find({})
       .sort({
         createdAt: -1,
@@ -137,8 +144,7 @@ export default async function AdminDashboardPage() {
       .lean(),
   ]);
 
-  const recentShipments =
-    recentShipmentsResult as unknown as RecentShipment[];
+  const recentShipments = recentShipmentsResult as unknown as RecentShipment[];
 
   const statistics = [
     {
@@ -212,13 +218,9 @@ export default async function AdminDashboardPage() {
               </span>
 
               <div className="min-w-0">
-                <p className="truncate text-sm font-black">
-                  {admin.name}
-                </p>
+                <p className="truncate text-sm font-black">{admin.name}</p>
 
-                <p className="truncate text-xs text-white/35">
-                  {admin.email}
-                </p>
+                <p className="truncate text-xs text-white/35">{admin.email}</p>
               </div>
             </div>
 
@@ -240,6 +242,11 @@ export default async function AdminDashboardPage() {
               >
                 <Icon size={18} />
                 {label}
+                {label === "Messages" && newMessageCount > 0 && (
+                  <span className="ml-auto flex h-6 min-w-6 items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-black text-white">
+                    {newMessageCount > 99 ? "99+" : newMessageCount}
+                  </span>
+                )}
               </Link>
             ))}
           </nav>
@@ -284,14 +291,7 @@ export default async function AdminDashboardPage() {
 
           <div className="mt-9 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {statistics.map(
-              ({
-                label,
-                value,
-                description,
-                Icon,
-                color,
-                background,
-              }) => (
+              ({ label, value, description, Icon, color, background }) => (
                 <article
                   key={label}
                   className="rounded-3xl border border-white/10 bg-[#111111] p-6"
@@ -302,15 +302,11 @@ export default async function AdminDashboardPage() {
                     <Icon size={22} />
                   </div>
 
-                  <p className="mt-6 text-3xl font-black">
-                    {value}
-                  </p>
+                  <p className="mt-6 text-3xl font-black">{value}</p>
 
                   <p className="mt-2 text-sm font-bold">{label}</p>
 
-                  <p className="mt-1 text-xs text-white/30">
-                    {description}
-                  </p>
+                  <p className="mt-1 text-xs text-white/30">{description}</p>
                 </article>
               ),
             )}
@@ -320,9 +316,7 @@ export default async function AdminDashboardPage() {
             <section className="rounded-3xl border border-white/10 bg-[#111111]">
               <div className="flex items-center justify-between border-b border-white/10 p-6">
                 <div>
-                  <h2 className="text-lg font-black">
-                    Recent shipments
-                  </h2>
+                  <h2 className="text-lg font-black">Recent shipments</h2>
 
                   <p className="mt-1 text-xs text-white/35">
                     The latest shipment records
@@ -343,13 +337,11 @@ export default async function AdminDashboardPage() {
                     <Boxes size={27} />
                   </span>
 
-                  <h3 className="mt-5 font-black">
-                    No shipments created
-                  </h3>
+                  <h3 className="mt-5 font-black">No shipments created</h3>
 
                   <p className="mt-2 max-w-sm text-sm leading-6 text-white/35">
-                    Create the first shipment to begin tracking its
-                    route and checkpoints.
+                    Create the first shipment to begin tracking its route and
+                    checkpoints.
                   </p>
 
                   <Link
@@ -374,8 +366,7 @@ export default async function AdminDashboardPage() {
                           </p>
 
                           <p className="mt-1 text-xs text-white/40">
-                            {shipment.origin.city},{" "}
-                            {shipment.origin.country}
+                            {shipment.origin.city}, {shipment.origin.country}
                             {" → "}
                             {shipment.destination.city},{" "}
                             {shipment.destination.country}
@@ -427,6 +418,16 @@ export default async function AdminDashboardPage() {
                   Icon={Users}
                   label="Manage admins"
                 />
+
+                <QuickAction
+                  href="/admin/messages"
+                  Icon={Mail}
+                  label={
+                    newMessageCount > 0
+                      ? `Messages (${newMessageCount} new)`
+                      : "Messages"
+                  }
+                />
               </div>
 
               <div className="mt-7 rounded-2xl border border-[#d4a72c]/20 bg-[#d4a72c]/[0.07] p-4">
@@ -438,8 +439,7 @@ export default async function AdminDashboardPage() {
                 </div>
 
                 <p className="mt-3 text-xs leading-6 text-white/40">
-                  This admin session expires automatically after eight
-                  hours.
+                  This admin session expires automatically after eight hours.
                 </p>
               </div>
             </aside>
@@ -459,11 +459,7 @@ type QuickActionProps = {
   label: string;
 };
 
-function QuickAction({
-  href,
-  Icon,
-  label,
-}: QuickActionProps) {
+function QuickAction({ href, Icon, label }: QuickActionProps) {
   return (
     <Link
       href={href}
@@ -490,10 +486,7 @@ function StatusBadge({ status }: { status: string }) {
 
   const label = status
     .split("_")
-    .map(
-      (word) =>
-        word.charAt(0).toUpperCase() + word.slice(1),
-    )
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
 
   return (
