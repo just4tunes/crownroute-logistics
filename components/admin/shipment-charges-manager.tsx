@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import {
+  ArrowUpRight,
   AlertTriangle,
   CheckCircle2,
   Clock3,
@@ -283,7 +284,7 @@ function ChargeCard({
                 charge.trackingNumber,
               )}`}
               target="_blank"
-              className="text-sm font-black text-[#e6bd4f] hover:underline"
+              className="break-all text-sm font-black text-[#e6bd4f] hover:underline"
             >
               {charge.trackingNumber}
             </Link>
@@ -295,6 +296,13 @@ function ChargeCard({
           </div>
 
           <h2 className="mt-3 text-xl font-black">{charge.title}</h2>
+          <Link
+            href={`/admin/shipments/${charge.shipmentId}`}
+            className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-white/50 transition hover:text-[#e6bd4f]"
+          >
+            Manage related shipment
+            <ArrowUpRight size={14} />
+          </Link>
           <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/55">
             {charge.description}
           </p>

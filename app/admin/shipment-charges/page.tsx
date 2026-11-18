@@ -1,7 +1,7 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ArrowLeft, CircleDollarSign } from "lucide-react";
+import { CircleDollarSign } from "lucide-react";
 
+import { AdminNavigation } from "@/components/admin/admin-navigation";
 import { ShipmentChargesManager } from "@/components/admin/shipment-charges-manager";
 import { getAdminSession } from "@/lib/admin-auth";
 import { connectToDatabase } from "@/lib/db";
@@ -28,17 +28,11 @@ export default async function AdminShipmentChargesPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#080808] px-5 py-10 text-white lg:px-8">
+    <>
+      <AdminNavigation />
+      <main className="min-h-screen bg-[#080808] px-5 py-10 text-white lg:px-8">
       <div className="mx-auto max-w-7xl">
-        <Link
-          href="/admin"
-          className="inline-flex items-center gap-2 text-sm font-bold text-white/40 transition hover:text-[#d4a72c]"
-        >
-          <ArrowLeft size={17} />
-          Back to dashboard
-        </Link>
-
-        <header className="mt-8">
+        <header>
           <span className="flex h-13 w-13 items-center justify-center rounded-2xl bg-[#d4a72c]/10 text-[#e6bd4f]">
             <CircleDollarSign size={25} />
           </span>
@@ -59,6 +53,7 @@ export default async function AdminShipmentChargesPage() {
           <ShipmentChargesManager />
         </div>
       </div>
-    </main>
+      </main>
+    </>
   );
 }

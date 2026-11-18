@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
+import { AdminNavigation } from "@/components/admin/admin-navigation";
 import { CreateShipmentForm } from "@/components/admin/create-shipment-form";
 import { getAdminSession } from "@/lib/admin-auth";
 import { connectToDatabase } from "@/lib/db";
@@ -25,5 +26,10 @@ export default async function NewShipmentPage() {
     redirect("/admin/login");
   }
 
-  return <CreateShipmentForm />;
+  return (
+    <>
+      <AdminNavigation />
+      <CreateShipmentForm />
+    </>
+  );
 }

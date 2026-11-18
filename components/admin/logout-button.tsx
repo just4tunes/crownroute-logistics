@@ -28,7 +28,7 @@ export function LogoutButton() {
       type="button"
       onClick={handleLogout}
       disabled={loading}
-      className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold text-white/45 transition hover:bg-red-400/10 hover:text-red-300 disabled:opacity-50"
+      className="flex w-full items-center gap-1.5 whitespace-nowrap rounded-xl px-1 py-2 text-xs font-semibold text-white/45 transition hover:bg-red-400/10 hover:text-red-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e6bd4f] disabled:cursor-not-allowed disabled:opacity-50 sm:gap-3 sm:px-4 sm:py-3 sm:text-sm"
     >
       {loading ? (
         <LoaderCircle size={18} className="animate-spin" />

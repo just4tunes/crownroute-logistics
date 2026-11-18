@@ -1,6 +1,7 @@
 import { isValidObjectId } from "mongoose";
 import { notFound, redirect } from "next/navigation";
 
+import { AdminNavigation } from "@/components/admin/admin-navigation";
 import { ShipmentManager } from "@/components/admin/shipment-manager";
 import { getAdminSession } from "@/lib/admin-auth";
 import { connectToDatabase } from "@/lib/db";
@@ -60,8 +61,9 @@ export default async function ShipmentManagementPage({
   );
 
   return (
-    <ShipmentManager
-      initialShipment={serializedShipment}
-    />
+    <>
+      <AdminNavigation />
+      <ShipmentManager initialShipment={serializedShipment} />
+    </>
   );
 }

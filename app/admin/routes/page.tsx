@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
-  ArrowLeft,
   CalendarDays,
   CheckCircle2,
   MapPin,
@@ -11,6 +10,7 @@ import {
   Truck,
 } from "lucide-react";
 
+import { AdminNavigation } from "@/components/admin/admin-navigation";
 import { getAdminSession } from "@/lib/admin-auth";
 import { connectToDatabase } from "@/lib/db";
 import { Admin } from "@/models/admin";
@@ -116,19 +116,13 @@ export default async function RouteManagementPage() {
   ).length;
 
   return (
-    <main className="min-h-screen bg-[#080808] px-5 py-10 text-white lg:px-8">
+    <>
+      <AdminNavigation />
+      <main className="min-h-screen bg-[#080808] px-5 py-10 text-white lg:px-8">
       <div className="mx-auto max-w-7xl">
         <header className="flex flex-col justify-between gap-6 sm:flex-row sm:items-end">
           <div>
-            <Link
-              href="/admin"
-              className="inline-flex items-center gap-2 text-sm font-semibold text-white/40 transition hover:text-[#e6bd4f]"
-            >
-              <ArrowLeft size={17} />
-              Back to dashboard
-            </Link>
-
-            <p className="mt-7 text-xs font-black uppercase tracking-[0.22em] text-[#d4a72c]">
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-[#d4a72c]">
               Route operations
             </p>
 
@@ -340,7 +334,8 @@ export default async function RouteManagementPage() {
           </section>
         )}
       </div>
-    </main>
+      </main>
+    </>
   );
 }
 

@@ -1,10 +1,7 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
-import {
-  ArrowLeft,
-  CreditCard,
-} from "lucide-react";
+import { CreditCard } from "lucide-react";
 
+import { AdminNavigation } from "@/components/admin/admin-navigation";
 import RegistrationPaymentsManager from "@/components/admin/registration-payments-manager";
 import { getAdminSession } from "@/lib/admin-auth";
 import { connectToDatabase } from "@/lib/db";
@@ -31,17 +28,11 @@ export default async function AdminRegistrationPaymentsPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#080808] px-5 py-10 text-white lg:px-8">
+    <>
+      <AdminNavigation />
+      <main className="min-h-screen bg-[#080808] px-5 py-10 text-white lg:px-8">
       <div className="mx-auto max-w-7xl">
-        <Link
-          href="/admin"
-          className="inline-flex items-center gap-2 text-sm font-bold text-white/40 transition hover:text-[#d4a72c]"
-        >
-          <ArrowLeft size={17} />
-          Back to dashboard
-        </Link>
-
-        <header className="mt-8">
+        <header>
           <span className="flex h-13 w-13 items-center justify-center rounded-2xl bg-[#d4a72c]/10 text-[#e6bd4f]">
             <CreditCard size={25} />
           </span>
@@ -65,6 +56,7 @@ export default async function AdminRegistrationPaymentsPage() {
           <RegistrationPaymentsManager />
         </div>
       </div>
-    </main>
+      </main>
+    </>
   );
 }
