@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import {
+  useEffect,
+  useRef,
   useState,
   type ChangeEvent,
   type FormEvent,
@@ -11,12 +13,19 @@ import {
   ArrowLeft,
   CheckCircle2,
   Copy,
+  ImagePlus,
   LoaderCircle,
   MapPin,
   PackagePlus,
   Route,
   UserRound,
+  X,
 } from "lucide-react";
+import {
+  isParcelImageContentType,
+  MAX_PARCEL_IMAGE_SIZE,
+  PARCEL_IMAGE_CONTENT_TYPES,
+} from "@/lib/parcel-image";
 
 const initialForm = {
   senderName: "",
@@ -47,9 +56,23 @@ export function CreateShipmentForm() {
   const [form, setForm] = useState(initialForm);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [parcelImage, setParcelImage] =
+    useState<File | null>(null);
+  const [parcelImagePreview, setParcelImagePreview] =
+    useState("");
+  const parcelImageInputRef =
+    useRef<HTMLInputElement>(null);
   const [createdShipment, setCreatedShipment] =
     useState<CreatedShipment | null>(null);
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!parcelImagePreview) {
+      return;
+    }
+
+    return () => URL.revokeObjectURL(parcelImagePreview);
+  }, [parcelImagePreview]);
 
   function updateField(
     event: ChangeEvent<
@@ -66,6 +89,48 @@ export function CreateShipmentForm() {
     }));
   }
 
+  function handleParcelImageChange(
+    event: ChangeEvent<HTMLInputElement>,
+  ) {
+    const selectedImage = event.currentTarget.files?.[0];
+
+    if (!selectedImage) {
+      return;
+    }
+
+    if (!isParcelImageContentType(selectedImage.type)) {
+      setError(
+        "Parcel photograph must be a JPEG, PNG or WebP image.",
+      );
+      event.currentTarget.value = "";
+      return;
+    }
+
+    if (selectedImage.size > MAX_PARCEL_IMAGE_SIZE) {
+      setError(
+        "Parcel photograph must be 3 MB or smaller.",
+      );
+      event.currentTarget.value = "";
+      return;
+    }
+
+    setParcelImage(selectedImage);
+    setParcelImagePreview(
+      URL.createObjectURL(selectedImage),
+    );
+    setError("");
+  }
+
+  function removeParcelImage() {
+    setParcelImage(null);
+    setParcelImagePreview("");
+    setError("");
+
+    if (parcelImageInputRef.current) {
+      parcelImageInputRef.current.value = "";
+    }
+  }
+
   async function handleSubmit(
     event: FormEvent<HTMLFormElement>,
   ) {
@@ -79,6 +144,17 @@ export function CreateShipmentForm() {
     setSubmitting(true);
 
     try {
+      if (
+        parcelImage &&
+        (!isParcelImageContentType(parcelImage.type) ||
+          parcelImage.size > MAX_PARCEL_IMAGE_SIZE)
+      ) {
+        setError(
+          "Choose a JPEG, PNG or WebP parcel photograph no larger than 3 MB.",
+        );
+        return;
+      }
+
       const requiredFields = [
         form.senderName,
         form.recipientName,
@@ -224,51 +300,64 @@ export function CreateShipmentForm() {
         return;
       }
 
-      const response = await fetch(
-        "/api/admin/shipments",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            senderName: form.senderName.trim(),
-            senderEmail: form.senderEmail.trim(),
-
-            recipientName:
-              form.recipientName.trim(),
-            recipientEmail:
-              form.recipientEmail.trim(),
-
-            originCity: form.originCity.trim(),
-            originCountry:
-              form.originCountry.trim(),
-            originLatitude,
-            originLongitude,
-
-            destinationCity:
-              form.destinationCity.trim(),
-            destinationCountry:
-              form.destinationCountry.trim(),
-            destinationLatitude,
-            destinationLongitude,
-
-            packageDescription:
-              form.packageDescription.trim(),
-
-            weight,
-            serviceMode: form.serviceMode,
-
-            departureDate:
-              departureDate.toISOString(),
-
-            arrivalDate:
-              arrivalDate.toISOString(),
-
-            autoProgressEnabled: true,
-          }),
-        },
+      const requestBody = new FormData();
+      requestBody.append("senderName", form.senderName.trim());
+      requestBody.append("senderEmail", form.senderEmail.trim());
+      requestBody.append("recipientName", form.recipientName.trim());
+      requestBody.append(
+        "recipientEmail",
+        form.recipientEmail.trim(),
       );
+      requestBody.append("originCity", form.originCity.trim());
+      requestBody.append(
+        "originCountry",
+        form.originCountry.trim(),
+      );
+      requestBody.append("originLatitude", String(originLatitude));
+      requestBody.append("originLongitude", String(originLongitude));
+      requestBody.append(
+        "destinationCity",
+        form.destinationCity.trim(),
+      );
+      requestBody.append(
+        "destinationCountry",
+        form.destinationCountry.trim(),
+      );
+      requestBody.append(
+        "destinationLatitude",
+        String(destinationLatitude),
+      );
+      requestBody.append(
+        "destinationLongitude",
+        String(destinationLongitude),
+      );
+      requestBody.append(
+        "packageDescription",
+        form.packageDescription.trim(),
+      );
+      requestBody.append(
+        "weight",
+        weight === undefined ? "" : String(weight),
+      );
+      requestBody.append("serviceMode", form.serviceMode);
+      requestBody.append(
+        "departureDate",
+        departureDate.toISOString(),
+      );
+      requestBody.append(
+        "arrivalDate",
+        arrivalDate.toISOString(),
+      );
+      requestBody.append("autoProgressEnabled", "true");
+
+      if (parcelImage) {
+        requestBody.append("parcelImage", parcelImage);
+      }
+
+      const response = await fetch("/api/admin/shipments", {
+        method: "POST",
+        body: requestBody,
+      });
 
       const data = await response
         .json()
@@ -587,6 +676,63 @@ export function CreateShipmentForm() {
                   placeholder="Describe the parcel or cargo"
                   className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm outline-none transition placeholder:text-white/20 focus:border-[#d4a72c]/70"
                 />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label
+                  htmlFor="parcelImage"
+                  className="mb-2 flex items-center gap-2 text-xs font-bold text-white/55"
+                >
+                  <ImagePlus size={15} />
+                  Parcel photograph (optional)
+                </label>
+
+                <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-4">
+                  <input
+                    ref={parcelImageInputRef}
+                    id="parcelImage"
+                    name="parcelImage"
+                    type="file"
+                    accept={PARCEL_IMAGE_CONTENT_TYPES.join(",")}
+                    onChange={handleParcelImageChange}
+                    aria-describedby="parcelImageHelp"
+                    className="block w-full text-sm text-white/60 file:mr-4 file:rounded-lg file:border-0 file:bg-[#d4a72c] file:px-4 file:py-2.5 file:text-xs file:font-black file:text-black hover:file:bg-[#efc95d]"
+                  />
+
+                  <p
+                    id="parcelImageHelp"
+                    className="mt-2 text-xs text-white/35"
+                  >
+                    JPEG, PNG or WebP. Maximum file size: 3 MB.
+                  </p>
+
+                  {parcelImage && (
+                    <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-start">
+                      {parcelImagePreview && (
+                        <img
+                          src={parcelImagePreview}
+                          alt="Preview of the selected parcel photograph"
+                          className="max-h-56 w-full rounded-xl bg-black/30 object-contain sm:w-64"
+                        />
+                      )}
+
+                      <div className="flex flex-1 items-start justify-between gap-4">
+                        <p className="break-all text-xs text-white/65">
+                          {parcelImage.name}
+                        </p>
+
+                        <button
+                          type="button"
+                          onClick={removeParcelImage}
+                          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs font-bold text-white/65 transition hover:border-red-400/40 hover:text-red-300"
+                        >
+                          <X size={14} />
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <FormField

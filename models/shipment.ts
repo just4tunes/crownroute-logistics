@@ -1,4 +1,9 @@
 import { Document, Model, Schema, model, models } from "mongoose";
+import {
+  MAX_PARCEL_IMAGE_SIZE,
+  PARCEL_IMAGE_CONTENT_TYPES,
+  type ParcelImageContentType,
+} from "@/lib/parcel-image";
 
 export type ShipmentStatus =
   | "created"
@@ -42,6 +47,14 @@ export type ShipmentNotification = {
   createdAt: Date;
 };
 
+export type ShipmentParcelImage = {
+  data: Buffer;
+  contentType: ParcelImageContentType;
+  fileName: string;
+  size: number;
+  uploadedAt: Date;
+};
+
 export interface IShipment extends Document {
   trackingNumber: string;
 
@@ -79,6 +92,7 @@ export interface IShipment extends Document {
   weight?: number;
   serviceMode: string;
   status: ShipmentStatus;
+  parcelImage?: ShipmentParcelImage;
 
   departureDate?: Date;
   arrivalDate?: Date;
@@ -197,6 +211,42 @@ const notificationSchema = new Schema<ShipmentNotification>(
   },
   {
     _id: true,
+  },
+);
+
+const parcelImageSchema = new Schema<ShipmentParcelImage>(
+  {
+    data: {
+      type: Buffer,
+      required: true,
+      select: false,
+    },
+
+    contentType: {
+      type: String,
+      enum: PARCEL_IMAGE_CONTENT_TYPES,
+      required: true,
+    },
+
+    fileName: {
+      type: String,
+      required: true,
+    },
+
+    size: {
+      type: Number,
+      required: true,
+      min: 1,
+      max: MAX_PARCEL_IMAGE_SIZE,
+    },
+
+    uploadedAt: {
+      type: Date,
+      required: true,
+    },
+  },
+  {
+    _id: false,
   },
 );
 
@@ -328,6 +378,10 @@ const shipmentSchema = new Schema<IShipment>(
       type: String,
       required: true,
       trim: true,
+    },
+
+    parcelImage: {
+      type: parcelImageSchema,
     },
 
     status: {

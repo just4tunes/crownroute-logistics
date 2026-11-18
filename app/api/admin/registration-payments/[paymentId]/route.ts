@@ -1,4 +1,4 @@
-import { isValidObjectId } from "mongoose";
+import { isValidObjectId, Types } from "mongoose";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -246,7 +246,9 @@ export async function PATCH(
 
       payment.status = "approved";
       payment.reviewedAt = new Date();
-      payment.reviewedBy = session.adminId;
+      payment.reviewedBy = new Types.ObjectId(
+        session.adminId,
+      );
 
       customer.registrationPaymentStatus =
         "approved";
@@ -271,7 +273,9 @@ export async function PATCH(
       payment.status = "rejected";
       payment.rejectionReason = update.reason;
       payment.reviewedAt = new Date();
-      payment.reviewedBy = session.adminId;
+      payment.reviewedBy = new Types.ObjectId(
+        session.adminId,
+      );
 
       customer.registrationPaymentStatus =
         "rejected";

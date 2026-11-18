@@ -76,6 +76,7 @@ type Shipment = {
   estimatedDelivery?: string;
   progress: number;
   autoProgressEnabled?: boolean;
+  hasParcelImage?: boolean;
 
   currentLocation?: {
     name?: string;
@@ -582,6 +583,46 @@ export function TrackingClient({
                   />
                 </div>
               </div>
+
+              {shipment.hasParcelImage && (
+                <section className="rounded-3xl border border-white/10 bg-[#111111] p-6">
+                  <div className="flex items-center gap-2 text-[#e6bd4f]">
+                    <Package size={18} />
+                    <h2 className="font-black text-white">
+                      Parcel photograph
+                    </h2>
+                  </div>
+
+                  <a
+                    href={`/api/tracking/${encodeURIComponent(
+                      shipment.trackingNumber,
+                    )}/parcel-image`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-5 block"
+                    aria-label="Open full parcel photograph"
+                  >
+                    <img
+                      src={`/api/tracking/${encodeURIComponent(
+                        shipment.trackingNumber,
+                      )}/parcel-image`}
+                      alt={`Parcel photograph for shipment ${shipment.trackingNumber}`}
+                      className="max-h-[28rem] w-full rounded-2xl bg-black/30 object-contain"
+                    />
+                  </a>
+
+                  <a
+                    href={`/api/tracking/${encodeURIComponent(
+                      shipment.trackingNumber,
+                    )}/parcel-image`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-3 inline-flex text-xs font-bold text-[#e6bd4f] underline underline-offset-4"
+                  >
+                    Open full image
+                  </a>
+                </section>
+              )}
             </aside>
 
             <div className="rounded-3xl border border-white/10 bg-[#111111] p-6 sm:p-8">

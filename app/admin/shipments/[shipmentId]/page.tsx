@@ -43,14 +43,20 @@ export default async function ShipmentManagementPage({
 
   const shipment = await Shipment.findById(
     shipmentId,
-  ).lean();
+  )
+    .select("+parcelImage.contentType")
+    .lean();
 
   if (!shipment) {
     notFound();
   }
 
+  const { parcelImage, ...safeShipment } = shipment;
   const serializedShipment = JSON.parse(
-    JSON.stringify(shipment),
+    JSON.stringify({
+      ...safeShipment,
+      hasParcelImage: Boolean(parcelImage?.contentType),
+    }),
   );
 
   return (

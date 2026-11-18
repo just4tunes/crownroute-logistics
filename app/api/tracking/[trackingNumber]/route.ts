@@ -65,6 +65,7 @@ export async function GET(
         "currentLocation",
         "checkpoints",
         "notifications",
+        "parcelImage.contentType",
         "createdAt",
         "updatedAt",
       ].join(" "),
@@ -89,9 +90,17 @@ export async function GET(
       await shipment.save();
     }
 
+    const {
+      parcelImage,
+      ...safeShipment
+    } = shipment.toObject();
+
     return NextResponse.json({
       success: true,
-      shipment: shipment.toObject(),
+      shipment: {
+        ...safeShipment,
+        hasParcelImage: Boolean(parcelImage?.contentType),
+      },
     });
   } catch (error) {
     console.error("Tracking API error:", error);

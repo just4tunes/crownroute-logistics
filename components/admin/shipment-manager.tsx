@@ -3,7 +3,9 @@
 import Link from "next/link";
 import {
   useEffect,
+  useRef,
   useState,
+  type ChangeEvent,
   type FormEvent,
 } from "react";
 import {
@@ -14,12 +16,20 @@ import {
   CheckCircle2,
   Clock3,
   ExternalLink,
+  ImagePlus,
   LoaderCircle,
   MapPin,
   Navigation,
   Save,
+  Trash2,
   Truck,
+  X,
 } from "lucide-react";
+import {
+  isParcelImageContentType,
+  MAX_PARCEL_IMAGE_SIZE,
+  PARCEL_IMAGE_CONTENT_TYPES,
+} from "@/lib/parcel-image";
 
 type CheckpointStatus =
   | "pending"
@@ -109,6 +119,7 @@ type ShipmentData = {
 
   checkpoints: Checkpoint[];
   notifications: ShipmentNotification[];
+  hasParcelImage?: boolean;
 };
 
 type ShipmentManagerProps = {
@@ -170,6 +181,14 @@ export function ShipmentManager({
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [selectedParcelImage, setSelectedParcelImage] =
+    useState<File | null>(null);
+  const [parcelImagePreview, setParcelImagePreview] =
+    useState("");
+  const [parcelImageVersion, setParcelImageVersion] =
+    useState(0);
+  const parcelImageInputRef =
+    useRef<HTMLInputElement>(null);
 
   const activeCheckpoint =
     shipment.checkpoints.find(
@@ -200,6 +219,146 @@ export function ShipmentManager({
     activeCheckpoint?.latitude,
     activeCheckpoint?.longitude,
   ]);
+
+  useEffect(() => {
+    if (!parcelImagePreview) {
+      return;
+    }
+
+    return () => URL.revokeObjectURL(parcelImagePreview);
+  }, [parcelImagePreview]);
+
+  function handleParcelImageChange(
+    event: ChangeEvent<HTMLInputElement>,
+  ) {
+    const file = event.currentTarget.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    if (!isParcelImageContentType(file.type)) {
+      setError(
+        "Choose a JPEG, PNG or WebP parcel photograph.",
+      );
+      event.currentTarget.value = "";
+      return;
+    }
+
+    if (file.size > MAX_PARCEL_IMAGE_SIZE) {
+      setError(
+        "The parcel photograph must be 3 MB or smaller.",
+      );
+      event.currentTarget.value = "";
+      return;
+    }
+
+    setSelectedParcelImage(file);
+    setParcelImagePreview(URL.createObjectURL(file));
+    setError("");
+    setSuccess("");
+  }
+
+  function clearSelectedParcelImage() {
+    setSelectedParcelImage(null);
+    setParcelImagePreview("");
+
+    if (parcelImageInputRef.current) {
+      parcelImageInputRef.current.value = "";
+    }
+  }
+
+  async function saveParcelImage() {
+    if (!selectedParcelImage) {
+      setError("Choose a parcel photograph before uploading.");
+      return;
+    }
+
+    setLoadingAction("parcel-image");
+    setError("");
+    setSuccess("");
+
+    try {
+      const formData = new FormData();
+      formData.append("parcelImage", selectedParcelImage);
+
+      const response = await fetch(
+        `/api/admin/shipments/${shipment._id}/parcel-image`,
+        {
+          method: "PUT",
+          body: formData,
+        },
+      );
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        setError(
+          data?.error ??
+            `Unable to upload the parcel photograph. Server returned ${response.status}.`,
+        );
+        return;
+      }
+
+      setShipment((current) => ({
+        ...current,
+        hasParcelImage: data.hasParcelImage,
+      }));
+      setParcelImageVersion((current) => current + 1);
+      clearSelectedParcelImage();
+      setSuccess(data.message);
+    } catch (uploadError) {
+      console.error("Parcel photograph upload failed:", uploadError);
+      setError("Unable to connect to the server to upload the photograph.");
+    } finally {
+      setLoadingAction("");
+    }
+  }
+
+  async function removeParcelImage() {
+    if (
+      !window.confirm(
+        "Remove the parcel photograph from this shipment?",
+      )
+    ) {
+      return;
+    }
+
+    setLoadingAction("remove-parcel-image");
+    setError("");
+    setSuccess("");
+
+    try {
+      const response = await fetch(
+        `/api/admin/shipments/${shipment._id}/parcel-image`,
+        {
+          method: "DELETE",
+        },
+      );
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        setError(
+          data?.error ??
+            `Unable to remove the parcel photograph. Server returned ${response.status}.`,
+        );
+        return;
+      }
+
+      setShipment((current) => ({
+        ...current,
+        hasParcelImage: false,
+      }));
+      clearSelectedParcelImage();
+      setSuccess(data.message);
+    } catch (removeError) {
+      console.error("Parcel photograph removal failed:", removeError);
+      setError("Unable to connect to the server to remove the photograph.");
+    } finally {
+      setLoadingAction("");
+    }
+  }
 
   async function updateShipment(
     action: Record<string, unknown>,
@@ -629,6 +788,164 @@ export function ShipmentManager({
               )}
             />
           </div>
+        </section>
+
+        <section className="mt-6 rounded-3xl border border-white/10 bg-[#111111] p-6">
+          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+            <div className="flex items-center gap-2 text-[#e6bd4f]">
+              <ImagePlus size={18} />
+              <h2 className="font-black text-white">
+                Parcel photograph
+              </h2>
+            </div>
+
+            {!selectedParcelImage && (
+              <button
+                type="button"
+                onClick={() => parcelImageInputRef.current?.click()}
+                disabled={
+                  loadingAction === "parcel-image" ||
+                  loadingAction === "remove-parcel-image"
+                }
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#d4a72c]/40 px-4 py-2.5 text-xs font-black text-[#e6bd4f] transition hover:bg-[#d4a72c]/10 disabled:opacity-50"
+              >
+                <ImagePlus size={15} />
+                {shipment.hasParcelImage
+                  ? "Replace photograph"
+                  : "Upload photograph"}
+              </button>
+            )}
+          </div>
+
+          <input
+            ref={parcelImageInputRef}
+            type="file"
+            accept={PARCEL_IMAGE_CONTENT_TYPES.join(",")}
+            onChange={handleParcelImageChange}
+            className="hidden"
+          />
+
+          {shipment.hasParcelImage ? (
+            <div className="mt-5">
+              <a
+                href={`/api/tracking/${encodeURIComponent(
+                  shipment.trackingNumber,
+                )}/parcel-image?v=${parcelImageVersion}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block"
+                aria-label="Open full parcel photograph"
+              >
+                <img
+                  src={`/api/tracking/${encodeURIComponent(
+                    shipment.trackingNumber,
+                  )}/parcel-image?v=${parcelImageVersion}`}
+                  alt={`Parcel photograph for shipment ${shipment.trackingNumber}`}
+                  className="max-h-[32rem] w-full rounded-2xl bg-black/30 object-contain"
+                />
+              </a>
+
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <a
+                  href={`/api/tracking/${encodeURIComponent(
+                    shipment.trackingNumber,
+                  )}/parcel-image?v=${parcelImageVersion}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex text-xs font-bold text-[#e6bd4f] underline underline-offset-4"
+                >
+                  Open full image
+                </a>
+
+                <button
+                  type="button"
+                  onClick={removeParcelImage}
+                  disabled={
+                    loadingAction === "parcel-image" ||
+                    loadingAction === "remove-parcel-image"
+                  }
+                  className="inline-flex items-center gap-2 rounded-xl border border-red-400/25 px-4 py-2.5 text-xs font-black text-red-300 transition hover:bg-red-400/10 disabled:opacity-50"
+                >
+                  {loadingAction === "remove-parcel-image" ? (
+                    <LoaderCircle size={15} className="animate-spin" />
+                  ) : (
+                    <Trash2 size={15} />
+                  )}
+                  Remove photograph
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="mt-5 text-sm text-white/40">
+              No parcel photograph uploaded.
+            </p>
+          )}
+
+          {selectedParcelImage && (
+            <div className="mt-6 border-t border-white/10 pt-5">
+              <p className="text-xs font-bold text-white/55">
+                Selected photograph
+              </p>
+
+              {parcelImagePreview && (
+                <img
+                  src={parcelImagePreview}
+                  alt="Preview of the selected parcel photograph"
+                  className="mt-3 max-h-[28rem] w-full rounded-2xl bg-black/30 object-contain"
+                />
+              )}
+
+              <div className="mt-3 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                <p className="break-all text-xs text-white/60">
+                  {selectedParcelImage.name}
+                </p>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => parcelImageInputRef.current?.click()}
+                    disabled={
+                      loadingAction === "parcel-image" ||
+                      loadingAction === "remove-parcel-image"
+                    }
+                    className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-bold text-white/65 transition hover:border-white/25 disabled:opacity-50"
+                  >
+                    <ImagePlus size={15} />
+                    Choose another
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={clearSelectedParcelImage}
+                    disabled={loadingAction === "parcel-image"}
+                    className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-bold text-white/65 transition hover:border-red-400/40 hover:text-red-300 disabled:opacity-50"
+                  >
+                    <X size={15} />
+                    Clear selection
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={saveParcelImage}
+                    disabled={
+                      loadingAction === "parcel-image" ||
+                      loadingAction === "remove-parcel-image"
+                    }
+                    className="inline-flex items-center gap-2 rounded-xl bg-[#d4a72c] px-4 py-2.5 text-xs font-black text-black transition hover:bg-[#efc95d] disabled:opacity-50"
+                  >
+                    {loadingAction === "parcel-image" ? (
+                      <LoaderCircle size={15} className="animate-spin" />
+                    ) : (
+                      <Save size={15} />
+                    )}
+                    {shipment.hasParcelImage
+                      ? "Save replacement"
+                      : "Upload photograph"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
         <section className="mt-8 grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
