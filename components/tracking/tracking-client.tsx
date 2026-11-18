@@ -45,6 +45,19 @@ type ShipmentNotification = {
   createdAt: string;
 };
 
+type TrackingCharge = {
+  id: string;
+  category: string;
+  title: string;
+  description: string;
+  amount: number;
+  currency: string;
+  issueStatus: string;
+  paymentStatus: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type Shipment = {
   _id: string;
   trackingNumber: string;
@@ -86,6 +99,7 @@ type Shipment = {
 
   checkpoints: Checkpoint[];
   notifications: ShipmentNotification[];
+  charges: TrackingCharge[];
   createdAt: string;
   updatedAt: string;
 };
@@ -168,7 +182,12 @@ export function TrackingClient({
           return;
         }
 
-        setShipment(data.shipment);
+        setShipment({
+          ...data.shipment,
+          charges: Array.isArray(data.charges)
+            ? data.charges
+            : [],
+        });
       } catch {
         if (!silent) {
           setError(
@@ -744,6 +763,101 @@ export function TrackingClient({
               </div>
             </div>
           </div>
+
+          {shipment.charges.length > 0 && (
+            <section className="mt-8 rounded-3xl border border-white/10 bg-[#111111] p-6 sm:p-8">
+              <div className="flex items-start gap-3">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-400/10 text-amber-300">
+                  <AlertTriangle size={21} />
+                </span>
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.2em] text-amber-300">
+                    Shipment attention
+                  </p>
+                  <h2 className="mt-1 text-2xl font-black">
+                    Shipment issues and fees
+                  </h2>
+                </div>
+              </div>
+
+              <div className="mt-6 space-y-4">
+                {shipment.charges.map((charge) => {
+                  const urgent =
+                    charge.issueStatus === "open" &&
+                    charge.paymentStatus === "unpaid";
+                  const historical = [
+                    "resolved",
+                    "cancelled",
+                  ].includes(charge.issueStatus) ||
+                    charge.paymentStatus === "waived";
+
+                  return (
+                    <article
+                      key={charge.id}
+                      className={`rounded-2xl border p-5 ${
+                        urgent
+                          ? "border-amber-400/30 bg-amber-400/[0.07]"
+                          : historical
+                            ? "border-white/5 bg-white/[0.015] opacity-70"
+                            : "border-white/10 bg-white/[0.025]"
+                      }`}
+                    >
+                      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <AlertTriangle
+                              size={17}
+                              className={
+                                urgent
+                                  ? "shrink-0 text-amber-300"
+                                  : "shrink-0 text-white/40"
+                              }
+                            />
+                            <span className="text-[10px] font-black uppercase tracking-wider text-white/45">
+                              {formatStatus(charge.category)}
+                            </span>
+                          </div>
+
+                          <h3 className="mt-2 text-lg font-black">
+                            {charge.title}
+                          </h3>
+                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/60">
+                            {charge.description}
+                          </p>
+                          <p className="mt-3 text-xs text-white/35">
+                            Created {formatDate(charge.createdAt)}
+                          </p>
+                        </div>
+
+                        <div className="shrink-0 sm:text-right">
+                          <p
+                            className={`text-xl font-black ${
+                              urgent
+                                ? "text-amber-200"
+                                : "text-white/75"
+                            }`}
+                          >
+                            {formatChargeCurrency(
+                              charge.amount,
+                              charge.currency,
+                            )}
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-2 sm:justify-end">
+                            <ChargeStatusPill
+                              status={charge.issueStatus}
+                            />
+                            <ChargeStatusPill
+                              status={charge.paymentStatus}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          )}
         </section>
       )}
     </main>
@@ -860,6 +974,51 @@ function StatusBadge({
       {formatStatus(status)}
     </span>
   );
+}
+
+function ChargeStatusPill({
+  status,
+}: {
+  status: string;
+}) {
+  const styles: Record<string, string> = {
+    open: "border-amber-400/25 bg-amber-400/10 text-amber-200",
+    resolved: "border-emerald-400/20 bg-emerald-400/10 text-emerald-200",
+    cancelled: "border-white/10 bg-white/[0.04] text-white/45",
+    unpaid: "border-red-400/25 bg-red-400/10 text-red-200",
+    awaiting_details:
+      "border-violet-400/20 bg-violet-400/10 text-violet-200",
+    awaiting_payment:
+      "border-orange-400/20 bg-orange-400/10 text-orange-200",
+    under_review: "border-blue-400/20 bg-blue-400/10 text-blue-200",
+    paid: "border-emerald-400/20 bg-emerald-400/10 text-emerald-200",
+    rejected: "border-red-400/20 bg-red-400/10 text-red-200",
+    waived: "border-sky-400/20 bg-sky-400/10 text-sky-200",
+  };
+
+  return (
+    <span
+      className={`rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wider ${
+        styles[status] ?? "border-white/10 bg-white/[0.04] text-white/45"
+      }`}
+    >
+      {formatStatus(status)}
+    </span>
+  );
+}
+
+function formatChargeCurrency(
+  amount: number,
+  currency: string,
+) {
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency,
+    }).format(amount);
+  } catch {
+    return `${currency} ${amount}`;
+  }
 }
 
 function formatStatus(value: string) {
