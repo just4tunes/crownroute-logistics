@@ -96,7 +96,27 @@ export async function GET(
     })
       .sort({ createdAt: -1 })
       .select(
-        "_id category title description amount currency issueStatus paymentStatus createdAt updatedAt",
+        [
+          "_id",
+          "category",
+          "title",
+          "description",
+          "amount",
+          "currency",
+          "issueStatus",
+          "paymentStatus",
+          "selectedPaymentMethod",
+          "paymentDetails.recipientName",
+          "paymentDetails.paymentAddress",
+          "paymentDetails.providerName",
+          "paymentDetails.instructions",
+          "paymentDetails.assignedAt",
+          "paymentDetails.expiresAt",
+          "paymentReceipt.contentType",
+          "rejectionReason",
+          "createdAt",
+          "updatedAt",
+        ].join(" "),
       )
       .lean();
 
@@ -111,18 +131,53 @@ export async function GET(
         ...safeShipment,
         hasParcelImage: Boolean(parcelImage?.contentType),
       },
-      charges: charges.map((charge) => ({
-        id: charge._id.toString(),
-        category: charge.category,
-        title: charge.title,
-        description: charge.description,
-        amount: charge.amount,
-        currency: charge.currency,
-        issueStatus: charge.issueStatus,
-        paymentStatus: charge.paymentStatus,
-        createdAt: charge.createdAt,
-        updatedAt: charge.updatedAt,
-      })),
+      charges: charges.map((charge) => {
+        const showPaymentDetails = [
+          "awaiting_payment",
+          "rejected",
+          "under_review",
+          "paid",
+        ].includes(charge.paymentStatus);
+
+        return {
+          id: charge._id.toString(),
+          category: charge.category,
+          title: charge.title,
+          description: charge.description,
+          amount: charge.amount,
+          currency: charge.currency,
+          issueStatus: charge.issueStatus,
+          paymentStatus: charge.paymentStatus,
+          selectedPaymentMethod: charge.selectedPaymentMethod,
+          ...(charge.paymentStatus === "rejected" &&
+          charge.rejectionReason
+            ? { rejectionReason: charge.rejectionReason }
+            : {}),
+          hasReceipt: Boolean(
+            charge.paymentReceipt?.contentType,
+          ),
+          ...(showPaymentDetails && charge.paymentDetails
+            ? {
+                paymentDetails: {
+                  recipientName:
+                    charge.paymentDetails.recipientName,
+                  paymentAddress:
+                    charge.paymentDetails.paymentAddress,
+                  providerName:
+                    charge.paymentDetails.providerName,
+                  instructions:
+                    charge.paymentDetails.instructions,
+                  assignedAt:
+                    charge.paymentDetails.assignedAt,
+                  expiresAt:
+                    charge.paymentDetails.expiresAt,
+                },
+              }
+            : {}),
+          createdAt: charge.createdAt,
+          updatedAt: charge.updatedAt,
+        };
+      }),
     });
   } catch (error) {
     console.error("Tracking API error:", error);

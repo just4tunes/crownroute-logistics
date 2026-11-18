@@ -5,7 +5,9 @@ import {
   FormEvent,
   useCallback,
   useEffect,
+  useRef,
   useState,
+  type ChangeEvent,
 } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -13,7 +15,9 @@ import {
   ArrowLeft,
   CalendarDays,
   Check,
+  CheckCircle2,
   Clock3,
+  Copy,
   Info,
   LoaderCircle,
   MapPin,
@@ -22,6 +26,10 @@ import {
   Truck,
   X,
 } from "lucide-react";
+import {
+  MAX_PAYMENT_RECEIPT_SIZE,
+  PAYMENT_RECEIPT_CONTENT_TYPES,
+} from "@/lib/payment-receipt";
 
 type Checkpoint = {
   _id?: string;
@@ -54,6 +62,17 @@ type TrackingCharge = {
   currency: string;
   issueStatus: string;
   paymentStatus: string;
+  selectedPaymentMethod?: string;
+  rejectionReason?: string;
+  hasReceipt: boolean;
+  paymentDetails?: {
+    recipientName?: string;
+    paymentAddress?: string;
+    providerName?: string;
+    instructions?: string;
+    assignedAt?: string;
+    expiresAt?: string;
+  };
   createdAt: string;
   updatedAt: string;
 };
@@ -99,7 +118,7 @@ type Shipment = {
 
   checkpoints: Checkpoint[];
   notifications: ShipmentNotification[];
-  charges: TrackingCharge[];
+  charges?: TrackingCharge[];
   createdAt: string;
   updatedAt: string;
 };
@@ -219,17 +238,27 @@ export function TrackingClient({
       return;
     }
 
+    const waitingForPaymentDetails =
+      shipment.charges?.some(
+        (charge) =>
+          charge.paymentStatus === "awaiting_details",
+      ) ?? false;
+
     const refreshTimer = window.setInterval(() => {
       void loadShipment(activeTrackingNumber, {
         silent: true,
         resetPopup: false,
       });
-    }, 30_000);
+    }, waitingForPaymentDetails ? 5_000 : 30_000);
 
     return () => {
       window.clearInterval(refreshTimer);
     };
-  }, [shipment?.trackingNumber, loadShipment]);
+  }, [
+    shipment?.trackingNumber,
+    shipment?.charges,
+    loadShipment,
+  ]);
 
   useEffect(() => {
     if (!shipment) {
@@ -764,7 +793,7 @@ export function TrackingClient({
             </div>
           </div>
 
-          {shipment.charges.length > 0 && (
+          {(shipment.charges?.length ?? 0) > 0 && (
             <section className="mt-8 rounded-3xl border border-white/10 bg-[#111111] p-6 sm:p-8">
               <div className="flex items-start gap-3">
                 <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-400/10 text-amber-300">
@@ -781,86 +810,573 @@ export function TrackingClient({
               </div>
 
               <div className="mt-6 space-y-4">
-                {shipment.charges.map((charge) => {
-                  const urgent =
-                    charge.issueStatus === "open" &&
-                    charge.paymentStatus === "unpaid";
-                  const historical = [
-                    "resolved",
-                    "cancelled",
-                  ].includes(charge.issueStatus) ||
-                    charge.paymentStatus === "waived";
-
-                  return (
-                    <article
-                      key={charge.id}
-                      className={`rounded-2xl border p-5 ${
-                        urgent
-                          ? "border-amber-400/30 bg-amber-400/[0.07]"
-                          : historical
-                            ? "border-white/5 bg-white/[0.015] opacity-70"
-                            : "border-white/10 bg-white/[0.025]"
-                      }`}
-                    >
-                      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <AlertTriangle
-                              size={17}
-                              className={
-                                urgent
-                                  ? "shrink-0 text-amber-300"
-                                  : "shrink-0 text-white/40"
-                              }
-                            />
-                            <span className="text-[10px] font-black uppercase tracking-wider text-white/45">
-                              {formatStatus(charge.category)}
-                            </span>
-                          </div>
-
-                          <h3 className="mt-2 text-lg font-black">
-                            {charge.title}
-                          </h3>
-                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/60">
-                            {charge.description}
-                          </p>
-                          <p className="mt-3 text-xs text-white/35">
-                            Created {formatDate(charge.createdAt)}
-                          </p>
-                        </div>
-
-                        <div className="shrink-0 sm:text-right">
-                          <p
-                            className={`text-xl font-black ${
-                              urgent
-                                ? "text-amber-200"
-                                : "text-white/75"
-                            }`}
-                          >
-                            {formatChargeCurrency(
-                              charge.amount,
-                              charge.currency,
-                            )}
-                          </p>
-                          <div className="mt-2 flex flex-wrap gap-2 sm:justify-end">
-                            <ChargeStatusPill
-                              status={charge.issueStatus}
-                            />
-                            <ChargeStatusPill
-                              status={charge.paymentStatus}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })}
+                {(shipment.charges ?? []).map((charge) => (
+                  <TrackingChargeCard
+                    key={charge.id}
+                    charge={charge}
+                    trackingNumber={shipment.trackingNumber}
+                    onUpdated={() =>
+                      loadShipment(shipment.trackingNumber, {
+                        silent: true,
+                        resetPopup: false,
+                      })
+                    }
+                  />
+                ))}
               </div>
             </section>
           )}
         </section>
       )}
     </main>
+  );
+}
+
+const shipmentChargePaymentMethods = [
+  { value: "bank_transfer", label: "Bank transfer" },
+  { value: "paypal", label: "PayPal" },
+  { value: "cash_app", label: "Cash App" },
+  { value: "bitcoin", label: "Bitcoin" },
+  { value: "usdt", label: "USDT" },
+] as const;
+
+const oneTimePaymentNotice =
+  "These payment details are assigned to this shipment charge only. Do not share or reuse them.";
+
+function TrackingChargeCard({
+  charge,
+  trackingNumber,
+  onUpdated,
+}: {
+  charge: TrackingCharge;
+  trackingNumber: string;
+  onUpdated: () => Promise<void>;
+}) {
+  const [paymentMethod, setPaymentMethod] = useState("");
+  const [requestModalOpen, setRequestModalOpen] = useState(false);
+  const [requestingPayment, setRequestingPayment] = useState(false);
+  const [uploadingReceipt, setUploadingReceipt] = useState(false);
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptPreview, setReceiptPreview] = useState("");
+  const [copyMessage, setCopyMessage] = useState("");
+  const [error, setError] = useState("");
+  const receiptInputRef = useRef<HTMLInputElement>(null);
+
+  const urgent =
+    charge.issueStatus === "open" &&
+    charge.paymentStatus === "unpaid";
+  const historical =
+    ["resolved", "cancelled"].includes(charge.issueStatus) ||
+    charge.paymentStatus === "waived";
+  const canPay =
+    charge.issueStatus === "open" &&
+    charge.paymentStatus === "unpaid";
+  const canUploadReceipt =
+    charge.issueStatus === "open" &&
+    (charge.paymentStatus === "awaiting_payment" ||
+      charge.paymentStatus === "rejected");
+
+  useEffect(() => {
+    if (!receiptPreview) {
+      return;
+    }
+
+    return () => URL.revokeObjectURL(receiptPreview);
+  }, [receiptPreview]);
+
+  function handleReceiptChange(
+    event: ChangeEvent<HTMLInputElement>,
+  ) {
+    const file = event.currentTarget.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    if (
+      !PAYMENT_RECEIPT_CONTENT_TYPES.some(
+        (contentType) => contentType === file.type,
+      )
+    ) {
+      setError("Receipt must be a JPEG, PNG or WebP image.");
+      event.currentTarget.value = "";
+      return;
+    }
+
+    if (file.size === 0 || file.size > MAX_PAYMENT_RECEIPT_SIZE) {
+      setError("Receipt image must be no larger than 2 MB.");
+      event.currentTarget.value = "";
+      return;
+    }
+
+    setReceiptFile(file);
+    setReceiptPreview(URL.createObjectURL(file));
+    setError("");
+  }
+
+  function clearReceipt() {
+    setReceiptFile(null);
+    setReceiptPreview("");
+    if (receiptInputRef.current) {
+      receiptInputRef.current.value = "";
+    }
+  }
+
+  async function submitPaymentRequest(
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+
+    if (!paymentMethod) {
+      setError("Select a payment method.");
+      return;
+    }
+
+    setRequestingPayment(true);
+    setError("");
+
+    try {
+      const response = await fetch(
+        `/api/tracking/${encodeURIComponent(
+          trackingNumber,
+        )}/charges/${charge.id}/payment-request`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ method: paymentMethod }),
+        },
+      );
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        setError(
+          data?.error ??
+            `Unable to prepare payment. Server returned ${response.status}.`,
+        );
+        return;
+      }
+
+      setRequestModalOpen(false);
+      setPaymentMethod("");
+      await onUpdated();
+    } catch (requestError) {
+      console.error("Shipment fee payment request failed:", requestError);
+      setError("Unable to connect to the payment service.");
+    } finally {
+      setRequestingPayment(false);
+    }
+  }
+
+  async function submitReceipt(
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+
+    if (!receiptFile) {
+      setError("Select a receipt screenshot to upload.");
+      return;
+    }
+
+    setUploadingReceipt(true);
+    setError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("paymentReceipt", receiptFile);
+
+      const response = await fetch(
+        `/api/tracking/${encodeURIComponent(
+          trackingNumber,
+        )}/charges/${charge.id}/receipt`,
+        {
+          method: "POST",
+          body: formData,
+        },
+      );
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        setError(
+          data?.error ??
+            `Unable to upload receipt. Server returned ${response.status}.`,
+        );
+        return;
+      }
+
+      clearReceipt();
+      await onUpdated();
+    } catch (uploadError) {
+      console.error("Shipment fee receipt upload failed:", uploadError);
+      setError("Unable to connect to the receipt service.");
+    } finally {
+      setUploadingReceipt(false);
+    }
+  }
+
+  async function copyPaymentAddress() {
+    const paymentAddress = charge.paymentDetails?.paymentAddress;
+
+    if (!paymentAddress) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(paymentAddress);
+      setCopyMessage("Copied");
+    } catch (copyError) {
+      console.error("Copy payment address failed:", copyError);
+      setCopyMessage("Unable to copy");
+    }
+
+    window.setTimeout(() => setCopyMessage(""), 2000);
+  }
+
+  return (
+    <article
+      className={`rounded-2xl border p-5 ${
+        urgent
+          ? "border-amber-400/30 bg-amber-400/[0.07]"
+          : historical
+            ? "border-white/5 bg-white/[0.015] opacity-70"
+            : "border-white/10 bg-white/[0.025]"
+      }`}
+    >
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <AlertTriangle
+              size={17}
+              className={
+                urgent ? "shrink-0 text-amber-300" : "shrink-0 text-white/40"
+              }
+            />
+            <span className="text-[10px] font-black uppercase tracking-wider text-white/45">
+              {formatStatus(charge.category)}
+            </span>
+          </div>
+
+          <h3 className="mt-2 text-lg font-black">{charge.title}</h3>
+          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/60">
+            {charge.description}
+          </p>
+          <p className="mt-3 text-xs text-white/35">
+            Created {formatDate(charge.createdAt)}
+          </p>
+        </div>
+
+        <div className="shrink-0 sm:text-right">
+          <p
+            className={`text-xl font-black ${
+              urgent ? "text-amber-200" : "text-white/75"
+            }`}
+          >
+            {formatChargeCurrency(charge.amount, charge.currency)}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2 sm:justify-end">
+            <ChargeStatusPill status={charge.issueStatus} />
+            <ChargeStatusPill status={charge.paymentStatus} />
+          </div>
+        </div>
+      </div>
+
+      {charge.paymentStatus === "paid" && (
+        <div className="mt-5 rounded-xl border border-emerald-400/20 bg-emerald-400/[0.06] p-4">
+          <div className="flex items-center gap-2 font-black text-emerald-200">
+            <CheckCircle2 size={17} />
+            Paid
+          </div>
+          <p className="mt-2 text-sm leading-6 text-white/55">
+            Payment approval does not automatically resolve the shipment
+            issue or remove a hold. Shipment progress is managed separately.
+          </p>
+        </div>
+      )}
+
+      {charge.paymentStatus === "awaiting_details" &&
+        charge.issueStatus === "open" && (
+          <div
+            role="status"
+            className="mt-5 rounded-xl border border-blue-400/20 bg-blue-400/[0.06] p-4"
+          >
+            <h4 className="font-black text-blue-200">
+              Preparing your payment details
+            </h4>
+            <p className="mt-2 text-sm leading-6 text-white/55">
+              Please hold while a one-time payment account is being prepared
+              for this shipment fee.
+            </p>
+            <p className="mt-3 text-xs leading-5 text-amber-100/60">
+              {oneTimePaymentNotice}
+            </p>
+          </div>
+        )}
+
+      {(charge.paymentStatus === "awaiting_payment" ||
+        charge.paymentStatus === "rejected") &&
+        charge.issueStatus === "open" && (
+          <div className="mt-5 space-y-4">
+            {charge.paymentStatus === "rejected" && (
+              <div className="rounded-xl border border-red-400/20 bg-red-400/[0.05] p-4">
+                <p className="font-bold text-red-200">
+                  Receipt needs correction
+                </p>
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/55">
+                  {charge.rejectionReason ||
+                    "The submitted receipt was rejected."}
+                </p>
+                <p className="mt-2 text-xs text-white/40">
+                  Upload a corrected receipt using these details, or request a
+                  different payment method.
+                </p>
+              </div>
+            )}
+
+            {charge.paymentDetails && (
+              <div className="rounded-xl border border-[#d4a72c]/20 bg-[#d4a72c]/[0.04] p-4">
+                <p className="text-sm font-black text-[#e6bd4f]">
+                  One-time payment details
+                </p>
+                <p className="mt-3 text-sm text-white/75">
+                  Recipient/account name:{" "}
+                  <strong>
+                    {charge.paymentDetails.recipientName || "Not provided"}
+                  </strong>
+                </p>
+                <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <p className="break-all text-sm text-white/75">
+                    Payment address:{" "}
+                    <strong>
+                      {charge.paymentDetails.paymentAddress ||
+                        "Not provided"}
+                    </strong>
+                  </p>
+                  {charge.paymentDetails.paymentAddress && (
+                    <button
+                      type="button"
+                      onClick={copyPaymentAddress}
+                      className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-xs font-bold text-white/70 hover:border-[#d4a72c]/40 hover:text-[#e6bd4f]"
+                    >
+                      <Copy size={13} />
+                      {copyMessage || "Copy"}
+                    </button>
+                  )}
+                </div>
+                {charge.paymentDetails.providerName && (
+                  <p className="mt-2 text-sm text-white/65">
+                    Provider: {charge.paymentDetails.providerName}
+                  </p>
+                )}
+                {charge.paymentDetails.instructions && (
+                  <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-white/55">
+                    {charge.paymentDetails.instructions}
+                  </p>
+                )}
+                {charge.paymentDetails.expiresAt && (
+                  <p className="mt-3 text-xs text-amber-200/70">
+                    Expires {formatDate(charge.paymentDetails.expiresAt)}
+                  </p>
+                )}
+                <p className="mt-4 text-sm font-bold text-[#e6bd4f]">
+                  Exact fee to pay:{" "}
+                  {formatChargeCurrency(charge.amount, charge.currency)}
+                </p>
+                <p className="mt-2 text-xs leading-5 text-amber-100/60">
+                  {oneTimePaymentNotice}
+                </p>
+              </div>
+            )}
+
+            {canUploadReceipt && (
+              <form
+                onSubmit={submitReceipt}
+                className="rounded-xl border border-white/10 bg-black/20 p-4"
+              >
+                <h4 className="font-bold">Submit payment receipt</h4>
+                <p className="mt-1 text-xs text-white/40">
+                  JPEG, PNG or WebP. Maximum file size: 2 MB.
+                </p>
+                <input
+                  ref={receiptInputRef}
+                  type="file"
+                  accept={PAYMENT_RECEIPT_CONTENT_TYPES.join(",")}
+                  onChange={handleReceiptChange}
+                  className="mt-4 block w-full text-sm text-white/60 file:mr-3 file:rounded-lg file:border-0 file:bg-[#d4a72c] file:px-3 file:py-2 file:text-xs file:font-black file:text-black"
+                />
+                {receiptFile && (
+                  <div className="mt-4">
+                    <p className="break-all text-xs text-white/60">
+                      {receiptFile.name}
+                    </p>
+                    {receiptPreview && (
+                      <img
+                        src={receiptPreview}
+                        alt="Selected payment receipt preview"
+                        className="mt-3 max-h-64 w-full rounded-xl bg-black/30 object-contain"
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={clearReceipt}
+                      className="mt-3 text-xs font-bold text-red-200 underline underline-offset-4"
+                    >
+                      Clear receipt
+                    </button>
+                  </div>
+                )}
+                <button
+                  type="submit"
+                  disabled={!receiptFile || uploadingReceipt}
+                  className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#d4a72c] px-5 py-3 text-xs font-black text-black transition hover:bg-[#efc95d] disabled:opacity-50"
+                >
+                  {uploadingReceipt && (
+                    <LoaderCircle size={15} className="animate-spin" />
+                  )}
+                  Upload receipt for verification
+                </button>
+              </form>
+            )}
+          </div>
+        )}
+
+      {charge.paymentStatus === "under_review" && (
+        <div
+          role="status"
+          className="mt-5 rounded-xl border border-blue-400/20 bg-blue-400/[0.05] p-4"
+        >
+          <p className="font-black text-blue-200">
+            Payment verification in progress.
+          </p>
+          <p className="mt-2 text-sm text-white/50">
+            Your receipt is being reviewed. Another receipt cannot be uploaded
+            while verification is in progress.
+          </p>
+        </div>
+      )}
+
+      {canPay && (
+        <button
+          type="button"
+          onClick={() => {
+            setError("");
+            setPaymentMethod("");
+            setRequestModalOpen(true);
+          }}
+          className="mt-5 inline-flex items-center gap-2 rounded-xl bg-[#d4a72c] px-5 py-3 text-sm font-black text-black transition hover:bg-[#efc95d]"
+        >
+          Pay Fee
+        </button>
+      )}
+
+      {charge.paymentStatus === "rejected" &&
+        charge.issueStatus === "open" && (
+          <button
+            type="button"
+            onClick={() => {
+              setError("");
+              setPaymentMethod("");
+              setRequestModalOpen(true);
+            }}
+            className="mt-4 inline-flex items-center rounded-xl border border-[#d4a72c]/30 px-4 py-2.5 text-xs font-black text-[#e6bd4f] transition hover:bg-[#d4a72c]/10"
+          >
+            Request a different payment method
+          </button>
+        )}
+
+      {error && (
+        <p
+          role="alert"
+          className="mt-4 rounded-xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm text-red-200"
+        >
+          {error}
+        </p>
+      )}
+
+      {requestModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !requestingPayment) {
+              setRequestModalOpen(false);
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={`charge-payment-title-${charge.id}`}
+            className="w-full max-w-lg rounded-3xl border border-white/10 bg-[#111111] p-6 shadow-2xl"
+          >
+            <h3
+              id={`charge-payment-title-${charge.id}`}
+              className="text-xl font-black"
+            >
+              Pay shipment fee
+            </h3>
+            <p className="mt-3 font-bold">{charge.title}</p>
+            <p className="mt-1 text-lg font-black text-[#e6bd4f]">
+              {formatChargeCurrency(charge.amount, charge.currency)}
+            </p>
+
+            <form onSubmit={submitPaymentRequest} className="mt-5">
+              <label className="text-xs font-bold text-white/55">
+                Preferred payment method
+                <select
+                  value={paymentMethod}
+                  onChange={(event) =>
+                    setPaymentMethod(event.target.value)
+                  }
+                  required
+                  className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-[#181818] px-4 text-sm text-white outline-none focus:border-[#d4a72c]/60"
+                >
+                  <option value="" disabled>
+                    Select a payment method
+                  </option>
+                  {shipmentChargePaymentMethods.map((method) => (
+                    <option key={method.value} value={method.value}>
+                      {method.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {error && (
+                <p role="alert" className="mt-3 text-sm text-red-300">
+                  {error}
+                </p>
+              )}
+
+              <p className="mt-4 text-xs leading-5 text-white/40">
+                Payment details will be prepared by CrownRoute operations.
+                Card payments and banking passwords are not accepted.
+              </p>
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setRequestModalOpen(false)}
+                  disabled={requestingPayment}
+                  className="rounded-xl border border-white/10 px-4 py-2.5 text-sm font-bold text-white/65 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!paymentMethod || requestingPayment}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#d4a72c] px-5 py-2.5 text-sm font-black text-black disabled:opacity-50"
+                >
+                  {requestingPayment && (
+                    <LoaderCircle size={15} className="animate-spin" />
+                  )}
+                  Request payment details
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </article>
   );
 }
 

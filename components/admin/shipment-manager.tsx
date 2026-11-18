@@ -1169,6 +1169,14 @@ export function ShipmentManager({
             </div>
           </div>
 
+          <Link
+            href="/admin/shipment-charges"
+            className="mt-4 inline-flex items-center gap-2 text-xs font-bold text-[#e6bd4f] underline underline-offset-4"
+          >
+            Manage payment requests and receipts
+            <ExternalLink size={13} />
+          </Link>
+
           <p className="mt-4 rounded-xl border border-amber-400/15 bg-amber-400/[0.05] px-4 py-3 text-sm leading-6 text-amber-100/70">
             Place the shipment on hold, delayed or customs using the status
             control before creating a related fee.

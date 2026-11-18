@@ -5,6 +5,7 @@ import {
   Boxes,
   CheckCircle2,
   Clock3,
+  CircleDollarSign,
   ExternalLink,
   LayoutDashboard,
   MapPinned,
@@ -405,6 +406,12 @@ export default async function AdminDashboardPage() {
                   href="/admin/shipments"
                   Icon={MapPinned}
                   label="Update tracking"
+                />
+
+                <QuickAction
+                  href="/admin/shipment-charges"
+                  Icon={CircleDollarSign}
+                  label="Shipment fee payments"
                 />
 
                 <QuickAction

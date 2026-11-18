@@ -18,6 +18,35 @@ type RouteContext = {
 
 const updateChargeSchema = z.discriminatedUnion("action", [
   z.object({
+    action: z.literal("assign_payment_details"),
+    recipientName: z.string().trim().min(2).max(150),
+    paymentAddress: z.string().trim().min(3).max(300),
+    providerName: z
+      .string()
+      .trim()
+      .max(150)
+      .optional()
+      .or(z.literal("")),
+    instructions: z
+      .string()
+      .trim()
+      .max(1000)
+      .optional()
+      .or(z.literal("")),
+    expiresAt: z
+      .string()
+      .datetime()
+      .optional()
+      .or(z.literal("")),
+  }),
+  z.object({
+    action: z.literal("approve_payment"),
+  }),
+  z.object({
+    action: z.literal("reject_payment"),
+    reason: z.string().trim().min(3).max(500),
+  }),
+  z.object({
     action: z.literal("resolve_issue"),
   }),
   z.object({
@@ -143,9 +172,117 @@ export async function PATCH(
     const now = new Date();
     let notificationTitle: string;
     let notificationMessage: string;
-    let notificationType: "information" | "success";
+    let notificationType:
+      | "information"
+      | "success"
+      | "warning";
 
-    if (action === "resolve_issue") {
+    if (action === "assign_payment_details") {
+      if (
+        charge.issueStatus !== "open" ||
+        ![
+          "awaiting_details",
+          "awaiting_payment",
+          "rejected",
+        ].includes(charge.paymentStatus)
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Payment details can only be assigned to an open charge awaiting details, payment or a corrected receipt.",
+          },
+          {
+            status: 409,
+          },
+        );
+      }
+
+      if (!charge.selectedPaymentMethod) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "The receiver must select a payment method before details are assigned.",
+          },
+          {
+            status: 409,
+          },
+        );
+      }
+
+      charge.paymentDetails = {
+        recipientName: result.data.recipientName,
+        paymentAddress: result.data.paymentAddress,
+        providerName: result.data.providerName || undefined,
+        instructions: result.data.instructions || undefined,
+        assignedAt: now,
+        expiresAt: result.data.expiresAt
+          ? new Date(result.data.expiresAt)
+          : undefined,
+      };
+      charge.paymentStatus = "awaiting_payment";
+      charge.rejectionReason = undefined;
+      notificationTitle = "Payment details prepared";
+      notificationMessage = `One-time payment details are ready for the shipment fee "${charge.title}".`;
+      notificationType = "information";
+    } else if (action === "approve_payment") {
+      if (
+        charge.issueStatus !== "open" ||
+        charge.paymentStatus !== "under_review"
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Only a submitted receipt for an open charge can be approved.",
+          },
+          {
+            status: 409,
+          },
+        );
+      }
+
+      if (!charge.paymentReceipt?.contentType) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "A receipt is required before approving payment.",
+          },
+          {
+            status: 409,
+          },
+        );
+      }
+
+      charge.paymentStatus = "paid";
+      charge.paidAt = now;
+      charge.reviewedAt = now;
+      charge.reviewedBy = new Types.ObjectId(session.adminId);
+      notificationTitle = "Shipment fee paid";
+      notificationMessage = `The payment for shipment fee "${charge.title}" has been approved. The shipment issue may still need to be resolved separately.`;
+      notificationType = "success";
+    } else if (action === "reject_payment") {
+      if (charge.paymentStatus !== "under_review") {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Only a receipt under review can be rejected.",
+          },
+          {
+            status: 409,
+          },
+        );
+      }
+
+      charge.paymentStatus = "rejected";
+      charge.rejectionReason = result.data.reason;
+      charge.reviewedAt = now;
+      charge.reviewedBy = new Types.ObjectId(session.adminId);
+      notificationTitle = "Shipment fee payment needs attention";
+      notificationMessage = `The receipt for "${charge.title}" could not be approved: ${result.data.reason}`;
+      notificationType = "warning";
+    } else if (action === "resolve_issue") {
       charge.issueStatus = "resolved";
       charge.resolvedAt = now;
       charge.resolvedBy = new Types.ObjectId(session.adminId);
@@ -195,7 +332,10 @@ export async function PATCH(
       title: notificationTitle,
       message: notificationMessage,
       type: notificationType,
-      showAsPopup: false,
+      showAsPopup:
+        action === "assign_payment_details" ||
+        action === "approve_payment" ||
+        action === "reject_payment",
       createdAt: now,
     });
     shipment.markModified("notifications");

@@ -6,6 +6,22 @@ import {
   model,
   models,
 } from "mongoose";
+import {
+  MAX_PAYMENT_RECEIPT_SIZE,
+  PAYMENT_RECEIPT_CONTENT_TYPES,
+  type PaymentReceiptContentType,
+} from "@/lib/payment-receipt";
+
+export const CHARGE_PAYMENT_METHODS = [
+  "bank_transfer",
+  "paypal",
+  "cash_app",
+  "bitcoin",
+  "usdt",
+] as const;
+
+export type ChargePaymentMethod =
+  (typeof CHARGE_PAYMENT_METHODS)[number];
 
 export const CHARGE_CATEGORIES = [
   "customs",
@@ -56,7 +72,7 @@ export interface IShipmentCharge extends Document {
   createdBy: Types.ObjectId;
   resolvedBy?: Types.ObjectId;
   resolvedAt?: Date;
-  selectedPaymentMethod?: string;
+  selectedPaymentMethod?: ChargePaymentMethod;
   paymentDetails?: {
     recipientName?: string;
     paymentAddress?: string;
@@ -67,7 +83,7 @@ export interface IShipmentCharge extends Document {
   };
   paymentReceipt?: {
     data: Buffer;
-    contentType: string;
+    contentType: PaymentReceiptContentType;
     fileName: string;
     size: number;
     uploadedAt: Date;
@@ -161,6 +177,7 @@ const shipmentChargeSchema = new Schema<IShipmentCharge>(
 
     selectedPaymentMethod: {
       type: String,
+      enum: CHARGE_PAYMENT_METHODS,
       trim: true,
     },
 
@@ -195,9 +212,19 @@ const shipmentChargeSchema = new Schema<IShipmentCharge>(
         select: false,
       },
 
-      contentType: String,
-      fileName: String,
-      size: Number,
+      contentType: {
+        type: String,
+        enum: PAYMENT_RECEIPT_CONTENT_TYPES,
+      },
+      fileName: {
+        type: String,
+        maxlength: 180,
+      },
+      size: {
+        type: Number,
+        min: 1,
+        max: MAX_PAYMENT_RECEIPT_SIZE,
+      },
       uploadedAt: Date,
     },
 
